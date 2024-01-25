@@ -1,0 +1,1066 @@
+---
+title: "Rhizo_assembly_decontam"
+author: "Abby Sulesky-Grieb"
+date: "2023-09-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r, message=FALSE, warning=FALSE}
+library(microViz)
+library(corncob)
+library(ggraph)
+library(DT)
+library(phyloseq)
+library(ggplot2)
+library(tidyverse)
+library(decontam)
+library(scales)
+library(vegan)
+library(microbiome)
+library(dplyr)
+library(patchwork)
+library(pairwiseAdonis)
+library(indicspecies)
+library(VennDiagram)
+library(UpSetR)
+```
+
+
+# Load in data to phyloseq
+```{r}
+setwd("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/")
+meta <- read.csv("rhizo_assembly_seq_meta_missing_samples.csv", sep=",")
+tax <- read.csv("taxonomy.csv", sep=",", row.names=1)
+tax <- as.matrix(tax)
+asv <- read.csv("otu_table.csv", sep=",", row.names=1)
+
+sample_names(TAX)
+
+# Merge back into phyloseq
+ASV <- otu_table(asv, taxa_are_rows = TRUE)
+TAX <- tax_table(tax)
+META <- sample_data(meta)
+RA_phyloseq <- merge_phyloseq(ASV, TAX, META)
+
+RA_phyloseq
+
+# view(sample_data(RA_phyloseq))
+# write.csv(data.frame(sample_data(RA_phyloseq)), "metadata_check.csv")
+
+saveRDS(RA_phyloseq, "rhizo_assembly_phyloseq_1.rds", compress=TRUE)
+
+RA_phyloseq <- readRDS("rhizo_assembly_phyloseq_1.rds")
+```
+
+
+two samples are missing after sequencing:
+RP_127   Rhizoplane Control_growth_R1_3
+RS_204   Rhizosphere Zeb_growth_V1_5
+
+
+# Decontam
+### Remove chloroplast and mitochondira
+```{r host_remove}
+## inspect library sizes
+# before host removal
+meta$LibrarySize <- sample_sums(RA_phyloseq)
+meta <- meta[order(meta$LibrarySize),]
+meta$Index <- seq(nrow(meta))
+ggplot(data=meta, aes(x=Index, y=LibrarySize, color=control_type)) + geom_point() + ggtitle("Reads before host removal")
+
+sum(meta$LibrarySize)
+
+### Remove host reads
+# Full phyloseq: 164,934 taxa
+
+# start with removing mitochondria and chloroplast
+RA_phyloseq_clean <- RA_phyloseq %>%
+  subset_taxa(
+      Family   != "f__Chloroplast" &
+      Family  != "f__Mitochondria" &
+      Phylum != ""
+  )
+RA_phyloseq_clean
+
+sum(sample_sums(RA_phyloseq_clean))
+
+#  % taxa that were removed:
+percent_taxa_removed <- ((164934-157716)/164934)*100
+percent_taxa_removed
+
+((20152636-18324057)/20152636)*100
+
+# after host removal
+df <- as.data.frame(sample_data(RA_phyloseq_clean)) 
+df$LibrarySize <- sample_sums(RA_phyloseq_clean)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=control_type)) + geom_point() + ggtitle("Reads after host removal")
+
+```
+
+
+### Subset experiment (remove seed control stuff)
+```{r subset}
+Zeb_seed_control_ps <- RA_phyloseq_clean %>% ps_filter(experiment == "seed_control", .keep_all_taxa = FALSE)
+
+saveRDS(Zeb_seed_control_ps, "zeb_seed_control_phyloseq.rds", compress=TRUE)
+
+RA_exp_phyloseq <- RA_phyloseq_clean %>% ps_filter(experiment == "rhizo_assembly", .keep_all_taxa = FALSE)
+# 157705 taxa in experiment
+
+# Set extraction group as a factor in the metadata
+sample_data(RA_exp_phyloseq)$extr_group <- as.factor(sample_data(RA_exp_phyloseq)$extr_group)
+```
+
+
+### Decontam by extraction group
+group 1
+```{r group1}
+# Decontam by extraction group 1
+group1_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "1", .keep_all_taxa = TRUE)
+
+sample_data(group1_RA)$is.neg <- sample_data(group1_RA)$control_type == "negative"
+contamdf.prev0.55_group1 <- isContaminant(group1_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group1$contaminant)
+
+# FALSE  TRUE 0.5 threshold
+# 156556  1149 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group1_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group1$contaminant)
+
+group1_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group1 Decontam")
+
+group1_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group1_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group1_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group1_RA <- prune_taxa(keep.taxa, group1_RA)
+decontam_group1_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group1_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group1_RA <- prune_samples(keep.samples, decontam_group1_RA)
+decontam_group1_RA
+
+sample_data(decontam_group1_RA)
+#write.csv(otu_table(decontam_group1_RA), "/Users/Abby/OneDrive - Michigan State University/multigen_analysis/seeds/New_argonne_seqs/decontam_ASVg0_1.csv")
+
+
+#### There is only a positive in GROUP 14 #### 
+# Do this code on whole dataset after group 14
+
+# decontam with positive control
+
+# sample_data(decontam_group1_RA)$is.neg <- sample_data(decontam_group1_RA)$control_type == "positive"
+# contamdf.prev0.5_group1p <- isContaminant(decontam_group1_RA, method="prevalence", neg="is.neg", threshold=0.5)
+# table(contamdf.prev0.5_group1p$contaminant)
+
+# FALSE  TRUE 0.5 threshold
+# 157704    0 
+
+# # Make phyloseq object of presence-absence in negative controls and true samples
+# ps.pa <- transform_sample_counts(decontam_group1_RA, function(abund) 1*(abund>0))
+# ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+# ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+# 
+# # Make data.frame of prevalence in positive and negative samples
+# df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+#                     contaminant=contamdf.prev0.1_g0_1$contaminant)
+# 
+# g0_1pos_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="g0_1 Decontam")
+# 
+# g0_1pos_decontam_plot
+# 
+# write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/multigen_analysis/seeds/New_argonne_seqs/contaminant-table-g0_1pos.csv")
+# 
+# # open contaminant-table in excel and add column name OTUID, then read back in below
+# 
+# ##removing contaminants from phyloseq object
+# df.pa <- read.csv("/Users/Abby/OneDrive - Michigan State University/multigen_analysis/seeds/New_argonne_seqs/contaminant-table-g0_1pos.csv")
+# subset.df <- subset(df.pa, contaminant== "FALSE")
+# keep.taxa <- as.vector(subset.df$OTUID)
+# 
+# subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+# remove.taxa.list <- as.vector(subset.df.remove)
+# remove.taxa.df <- data.frame(remove.taxa.list)
+# 
+# decontam_group1_RA <- prune_taxa(keep.taxa, decontam_group1_RA)
+# decontam_group1_RA
+# 
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+# subset.metadata <- subset(sample_data(decontam_group1_RA), is.neg ==FALSE)
+# 
+# keep.samples <- as.vector(subset.metadata$SampleID)
+# keep.samples
+# 
+# decontam_group1_RA <- prune_samples(keep.samples, decontam_group1_RA)
+# decontam_group1_RA
+
+# write.csv(otu_table(decontam_group1_RA), "/Users/Abby/OneDrive - Michigan State University/multigen_analysis/seeds/New_argonne_seqs/decontam_ASVg0_1pos.csv")
+```
+
+group 2
+```{r group2}
+# Decontam by extraction group 1
+group2_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "2", .keep_all_taxa = TRUE)
+
+sample_data(group2_RA)$is.neg <- sample_data(group2_RA)$control_type == "negative"
+contamdf.prev0.55_group2 <- isContaminant(group2_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group2$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156516    1189 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group2_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group2$contaminant)
+
+group2_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group2 Decontam 0.55")
+
+group2_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group2_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group2_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group2_RA <- prune_taxa(keep.taxa, group2_RA)
+decontam_group2_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group2_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group2_RA <- prune_samples(keep.samples, decontam_group2_RA)
+decontam_group2_RA
+```
+
+group 3
+```{r group3}
+# Decontam by extraction group 3
+group3_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "3", .keep_all_taxa = TRUE)
+
+sample_data(group3_RA)$is.neg <- sample_data(group3_RA)$control_type == "negative"
+contamdf.prev0.55_group3 <- isContaminant(group3_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group3$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156672    1033 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group3_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group3$contaminant)
+
+group3_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group2 Decontam 0.55")
+
+group3_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group3_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group3_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group3_RA <- prune_taxa(keep.taxa, group3_RA)
+decontam_group3_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group3_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group3_RA <- prune_samples(keep.samples, decontam_group3_RA)
+decontam_group3_RA
+```
+
+
+group 4
+```{r group4}
+# Decontam by extraction group 4
+group4_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "4", .keep_all_taxa = TRUE)
+
+sample_data(group4_RA)$is.neg <- sample_data(group4_RA)$control_type == "negative"
+contamdf.prev0.55_group4 <- isContaminant(group4_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group4$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156916    789 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group4_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group4$contaminant)
+
+group4_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group4 Decontam 0.55")
+
+group4_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group4_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group4_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group4_RA <- prune_taxa(keep.taxa, group4_RA)
+decontam_group4_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group4_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group4_RA <- prune_samples(keep.samples, decontam_group4_RA)
+decontam_group4_RA
+```
+
+
+group 5
+```{r group5}
+# Decontam by extraction group 5
+group5_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "5", .keep_all_taxa = TRUE)
+
+sample_data(group5_RA)$is.neg <- sample_data(group5_RA)$control_type == "negative"
+contamdf.prev0.55_group5 <- isContaminant(group5_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group5$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156491   1214 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group5_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group5$contaminant)
+
+group5_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group5 Decontam 0.55")
+
+group5_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group5_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group5_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group5_RA <- prune_taxa(keep.taxa, group5_RA)
+decontam_group5_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group5_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group5_RA <- prune_samples(keep.samples, decontam_group5_RA)
+decontam_group5_RA
+```
+
+group 6
+```{r group6}
+# Decontam by extraction group 6
+group6_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "6", .keep_all_taxa = TRUE)
+
+sample_data(group6_RA)$is.neg <- sample_data(group6_RA)$control_type == "negative"
+contamdf.prev0.55_group6 <- isContaminant(group6_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group6$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156547   1158 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group6_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group6$contaminant)
+
+group6_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group6 Decontam 0.55")
+
+group6_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group6_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group6_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group6_RA <- prune_taxa(keep.taxa, group6_RA)
+decontam_group6_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group6_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group6_RA <- prune_samples(keep.samples, decontam_group6_RA)
+decontam_group6_RA
+```
+
+
+group 7
+```{r group7}
+# Decontam by extraction group 7
+group7_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "7", .keep_all_taxa = TRUE)
+
+sample_data(group7_RA)$is.neg <- sample_data(group7_RA)$control_type == "negative"
+contamdf.prev0.55_group7 <- isContaminant(group7_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group7$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156704   1001 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group7_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group7$contaminant)
+
+group7_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group7 Decontam 0.55")
+
+group7_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group7_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group7_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group7_RA <- prune_taxa(keep.taxa, group7_RA)
+decontam_group7_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group7_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group7_RA <- prune_samples(keep.samples, decontam_group7_RA)
+decontam_group7_RA
+```
+
+
+group 8
+```{r group8}
+# Decontam by extraction group 8
+group8_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "8", .keep_all_taxa = TRUE)
+
+sample_data(group8_RA)$is.neg <- sample_data(group8_RA)$control_type == "negative"
+contamdf.prev0.55_group8 <- isContaminant(group8_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group8$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156077   1628 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group8_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group8$contaminant)
+
+group8_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group8 Decontam 0.55")
+
+group8_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group8_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group8_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group8_RA <- prune_taxa(keep.taxa, group8_RA)
+decontam_group8_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group8_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group8_RA <- prune_samples(keep.samples, decontam_group8_RA)
+decontam_group8_RA
+```
+
+group 9
+```{r group9}
+# Decontam by extraction group 9
+group9_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "9", .keep_all_taxa = TRUE)
+
+sample_data(group9_RA)$is.neg <- sample_data(group9_RA)$control_type == "negative"
+contamdf.prev0.55_group9 <- isContaminant(group9_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group9$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156092   1613 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group9_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group9$contaminant)
+
+group9_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group9 Decontam 0.55")
+
+group9_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group9_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group9_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group9_RA <- prune_taxa(keep.taxa, group9_RA)
+decontam_group9_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group9_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group9_RA <- prune_samples(keep.samples, decontam_group9_RA)
+decontam_group9_RA
+```
+
+group 10
+```{r group10}
+# Decontam by extraction group 10
+group10_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "10", .keep_all_taxa = TRUE)
+
+sample_data(group10_RA)$is.neg <- sample_data(group10_RA)$control_type == "negative"
+contamdf.prev0.55_group10 <- isContaminant(group10_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group10$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 157704   1 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group10_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group10$contaminant)
+
+group10_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group10 Decontam 0.55")
+
+group10_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group10_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group10_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group10_RA <- prune_taxa(keep.taxa, group10_RA)
+decontam_group10_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group10_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group10_RA <- prune_samples(keep.samples, decontam_group10_RA)
+decontam_group10_RA
+```
+
+
+group 11
+```{r group11}
+# Decontam by extraction group 11
+group11_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "11", .keep_all_taxa = TRUE)
+
+sample_data(group11_RA)$is.neg <- sample_data(group11_RA)$control_type == "negative"
+contamdf.prev0.55_group11 <- isContaminant(group11_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group11$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156243   1462 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group11_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group11$contaminant)
+
+group11_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group11 Decontam 0.55")
+
+group11_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group11_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group11_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group11_RA <- prune_taxa(keep.taxa, group11_RA)
+decontam_group11_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group11_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group11_RA <- prune_samples(keep.samples, decontam_group11_RA)
+decontam_group11_RA
+```
+
+
+group 12
+```{r group12}
+# Decontam by extraction group 12
+group12_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "12", .keep_all_taxa = TRUE)
+
+sample_data(group12_RA)$is.neg <- sample_data(group12_RA)$control_type == "negative"
+contamdf.prev0.55_group12 <- isContaminant(group12_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group12$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156333   1372 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group12_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group12$contaminant)
+
+group12_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group12 Decontam 0.55")
+
+group12_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group12_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group12_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group12_RA <- prune_taxa(keep.taxa, group12_RA)
+decontam_group12_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group12_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group12_RA <- prune_samples(keep.samples, decontam_group12_RA)
+decontam_group12_RA
+```
+
+group 13
+```{r group13}
+# Decontam by extraction group 13
+group13_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "13", .keep_all_taxa = TRUE)
+
+sample_data(group13_RA)$is.neg <- sample_data(group13_RA)$control_type == "negative"
+contamdf.prev0.55_group13 <- isContaminant(group13_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group13$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156315   1390 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group13_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group13$contaminant)
+
+group13_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group13 Decontam 0.55")
+
+group13_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group13_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group13_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group13_RA <- prune_taxa(keep.taxa, group13_RA)
+decontam_group13_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group13_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group13_RA <- prune_samples(keep.samples, decontam_group13_RA)
+decontam_group13_RA
+```
+
+group 14
+```{r group14}
+# Decontam by extraction group 14
+group14_RA <- RA_exp_phyloseq %>% 
+  ps_filter(extr_group == "14", .keep_all_taxa = TRUE)
+
+sample_data(group14_RA)$is.neg <- sample_data(group14_RA)$control_type == "negative"
+contamdf.prev0.55_group14 <- isContaminant(group14_RA, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_group14$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 156416   1289 
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(group14_RA, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_group14$contaminant)
+
+group14_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="group14 Decontam 0.55")
+
+group14_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/group14_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("group14_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+decontam_group14_RA <- prune_taxa(keep.taxa, group14_RA)
+decontam_group14_RA
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(decontam_group14_RA), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+decontam_group14_RA <- prune_samples(keep.samples, decontam_group14_RA)
+decontam_group14_RA
+```
+
+
+# merge all together
+```{r merge_decontam}
+# grab the seq_center negatives as a separate phyloseq
+
+seqcenter <- RA_exp_phyloseq %>% 
+  ps_filter(PlantID == "Seq_negative", .keep_all_taxa = TRUE)
+
+RA_phyloseq_decontam <- merge_phyloseq(decontam_group1_RA, decontam_group2_RA, decontam_group3_RA, decontam_group4_RA, decontam_group5_RA, decontam_group6_RA, decontam_group7_RA, decontam_group8_RA, decontam_group9_RA, decontam_group10_RA, decontam_group11_RA, decontam_group12_RA, decontam_group13_RA, decontam_group14_RA, seqcenter)
+
+RA_phyloseq_decontam
+
+# decontam with positives and seq_center
+
+sample_data(RA_phyloseq_decontam)$is.neg <- sample_data(RA_phyloseq_decontam)$sample_type == "control"
+contamdf.prev0.55_full <- isContaminant(RA_phyloseq_decontam, method="prevalence", neg="is.neg", threshold=0.55)
+table(contamdf.prev0.55_full$contaminant)
+
+# FALSE  TRUE 0.55 threshold
+# 146223   11482 
+
+table(sample_data(RA_phyloseq_decontam)$sample_type)
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(RA_phyloseq_decontam, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == TRUE, ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == FALSE, ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev0.55_full$contaminant)
+
+full_decontam_plot <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() + labs(x="Prevalence (Negative Controls)", y="Prevalence (True Samples)", title="full Decontam 0.55")
+
+full_decontam_plot
+
+write.csv(df.pa, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/full_decontam.csv")
+
+# open contaminant-table in excel and add column name OTUID, then read back in below
+
+##removing contaminants from phyloseq object
+df.pa <- read.csv("full_decontam.csv")
+subset.df <- subset(df.pa, contaminant== "FALSE")
+keep.taxa <- as.vector(subset.df$OTUID)
+
+subset.df.remove <- subset(df.pa, contaminant== "TRUE")
+remove.taxa.list <- as.vector(subset.df.remove)
+remove.taxa.df <- data.frame(remove.taxa.list)
+
+RA_final_phyloseq <- prune_taxa(keep.taxa, RA_phyloseq_decontam)
+RA_final_phyloseq
+
+##filter metadata to true samples only then merge with phyloseq decontam (with removed OTU contaminants)
+subset.metadata<- subset(sample_data(RA_final_phyloseq), is.neg ==FALSE)
+
+keep.samples <- as.vector(subset.metadata$SampleID)
+keep.samples
+
+RA_final_phyloseq <- prune_samples(keep.samples, RA_final_phyloseq)
+RA_final_phyloseq
+
+saveRDS(RA_final_phyloseq, "RA_phyloseq_decontam.rds", compress=TRUE)
+```
+
+# Rarefy
+```{r rarefy_RA}
+# reads per sample after decontam
+df <- as.data.frame(sample_data(RA_final_phyloseq)) 
+df$LibrarySize <- sample_sums(RA_final_phyloseq)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=compartment, shape=group)) + geom_point(size=3, alpha=0.5) + ggtitle("Reads after decontam")
+
+RA_final_phyloseq <- readRDS("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/RA_phyloseq_decontam.rds")
+
+# make rarecurve, "tidy" makes ggplot friendly object
+ASVtable <- t(otu_table(RA_final_phyloseq)) 
+class(ASVtable) <- "matrix"
+
+rarecurve <- rarecurve(ASVtable, step = 1000, xlab = "Sample Size", ylab = "ASV", label = FALSE, tidy = TRUE)
+
+rarecurve_plot <- ggplot(rarecurve, aes(Sample, Species)) + geom_point(size=0.1) #+ geom_vline(xintercept = min10, col="red")
+plot(rarecurve_plot)
+
+# find minimum number of reads for rarefying
+minreads <- min(sample_sums(RA_final_phyloseq))
+minreads
+plot(sample_sums(RA_final_phyloseq))
+sums <- as.vector(sample_sums(RA_final_phyloseq))
+read_list <- sort(sums)
+sum(sums)
+
+# second and third lowest min
+min2 <- read_list[2]
+min2
+min3 <- read_list[3]
+min3
+min4 <- read_list[4]
+min4
+
+min10 <- read_list[10]
+min10
+min11 <- read_list[11]
+min11
+min12 <- read_list[12]
+min12
+
+rarecurve_plot2 <- ggplot(rarecurve, aes(Sample, Species)) + geom_point(size=0.1) + geom_vline(xintercept = min10, col="red")
+plot(rarecurve_plot2)
+
+ggsave(rarecurve_plot2, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rarefaction_curve.pdf", dpi=300, width=8, height=5, units="in")
+
+# Rarefy at min10 - rngseed is used to set seed for rarefaction
+RA_rarefied <- rarefy_even_depth(RA_final_phyloseq, sample.size = min10, rngseed = 8, trimOTUs=TRUE)
+
+sample_list <- sample_names(RA_rarefied)
+
+ful_sample_list <- sample_names(RA_final_phyloseq)
+
+samples.df <- matrix(nrow=9, ncol=1)
+sample.df <- data.frame(samples.df)
+list <- setdiff(ful_sample_list, sample_list)
+sample.df$SampleID <- list
+
+# Lost 9 samples in rarefaction:
+# "RP_66"  "RP_67"  "RP_81"  "RP_90"  "RP_91"  "RP_92"  "RS_210" "RS_255" "RS_257"
+
+lost_samples <- left_join(sample.df, sample_data(RA_final_phyloseq))
+lost_samples
+
+write.csv(lost_samples, "RA_lost_samples.csv")
+
+saveRDS(RA_rarefied, "RA_phyloseq_rarefied.rds", compress=TRUE)
+```
+
+# seed control test decontam
+```{r}
+zeb_seed_control_phyloseq <- readRDS(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/zeb_seed_control_phyloseq.rds")
+
+meta_seed <- data.frame(sample_data(zeb_seed_control_phyloseq))
+
+meta_seed$LibrarySize <- sample_sums(zeb_seed_control_phyloseq)
+meta_seed <- meta_seed[order(meta_seed$LibrarySize),]
+meta_seed$Index <- seq(nrow(meta_seed))
+ggplot(data=meta_seed, aes(x=Index, y=LibrarySize, color=control_type)) + geom_point() + ggtitle("Reads before decontam")
+
+otu_table(zeb_seed_control_phyloseq)
+
+# basically no reads in any of the samples with host reads removed. Not worth using.
+# 3 ASVs are found in 3 total samples. No reads in any other samples.
+# interestingly, 2 out of 3 ASVs found are core bean seed ASVs (83e948f389f9d97b0c975afc880989e8, cc761daf51f27c423da57f3f1f0ff5cc)
+
+```
+

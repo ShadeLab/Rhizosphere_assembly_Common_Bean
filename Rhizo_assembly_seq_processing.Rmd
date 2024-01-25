@@ -1,0 +1,472 @@
+---
+title: "Rhizo Assembly Seq Processing"
+author: "Abby Sulesky-Grieb"
+date: "2023-08-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Copy demultiplexed sequences into working space from raw_sequence directory
+go to the raw sequence folder, *.fastq will grab all files ending in .fastq, then list the destination directory
+
+do this for all 3 miseq runs separately, will merge runs after dada2 step
+
+nano copy_seqs(1-3).sb
+```{r}
+#!/bin/bash -login
+
+#SBATCH --time=03:59:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem=30G
+#SBATCH -A shade-cole-bonito
+#SBATCH --job-name copy_seqs1
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+######## Job code
+
+cp *.fastq.gz /mnt/research/ShadeLab/WorkingSpace/Sulesky/Rhizo_assembly/run1
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_ID
+
+
+#!/bin/bash -login
+
+#SBATCH --time=03:59:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem=30G
+#SBATCH -A shade-cole-bonito
+#SBATCH --job-name copy_seqs2
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+######## Job code
+
+cp *.fastq.gz /mnt/research/ShadeLab/WorkingSpace/Sulesky/Rhizo_assembly/run2
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_ID
+
+
+#!/bin/bash -login
+
+#SBATCH --time=03:59:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem=30G
+#SBATCH -A shade-cole-bonito
+#SBATCH --job-name copy_seqs3
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+######## Job code
+
+cp *.fastq.gz /mnt/research/ShadeLab/WorkingSpace/Sulesky/Rhizo_assembly/run3
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_ID
+```
+
+submit job:
+sbatch copy_seqs(1-3).sb
+
+
+## Run figaro for each seq run
+make figaro output folder in workingspace directory, add sub-directory called figaro_input
+
+unzip fastq files in the figaro_input directory
+
+#!/bin/bash -login
+
+#SBATCH --time=03:59:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem=30G
+#SBATCH -A shade-cole-bonito
+#SBATCH --job-name unzip
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+######## Job code
+
+gunzip *fastq.gz
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_ID
+
+than go abck and delete job file and slurm output, need to only have unzipped fastqs in the input folder
+
+
+go to home directory where figaro is installed to run figaro:
+cd /mnt/home/suleskya/figaro-master/figaro
+
+Run figaro as a job:
+
+nano figaro_RA_(1-3).sb
+
+```{r}
+#!/bin/bash -login
+########## SBATCH Lines for Resource Request ##########
+
+#SBATCH --time=3:59:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=64G
+#SBATCH --job-name figaro1
+#SBATCH -A shade-cole-bonito
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+########## Command Lines for Job Running ##########
+
+conda activate figaro
+
+python figaro.py -i /mnt/research/ShadeLab/WorkingSpace/Sulesky/Rhizo_assembly/run1/figaro/figaro_input -o /mnt/research/ShadeLab/WorkingSpace/Sulesky/Rhizo_assembly/run1/figaro -f 1 -r 1 -a 253 -F illumina
+
+conda deactivate
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_I
+
+
+```
+
+sbatch figaro_argonne_june2023.sb
+
+Once job is finished, check the figaro output:
+
+cd back to figaro folder in workingspace directory
+
+> less trimParameters.json 
+Run 1
+    {
+        "trimPosition": [
+            99,
+            176
+        ],
+        "maxExpectedError": [
+            1,
+            2
+        ],
+        "readRetentionPercent": 95.73,
+        "score": 94.73149502123808
+    },
+    
+> control Z to exit "less"
+
+Run 2
+{
+        "trimPosition": [
+            124,
+            151
+        ],
+        "maxExpectedError": [
+            1,
+            2
+        ],
+        "readRetentionPercent": 95.26,
+        "score": 94.26206520604508
+    }
+    
+Run 3
+ {
+        "trimPosition": [
+            125,
+            150
+        ],
+        "maxExpectedError": [
+            1,
+            2
+        ],
+        "readRetentionPercent": 95.13,
+        "score": 94.12665388967142
+    }
+
+Run1: truncate the sequences at forward 99 and reverse 176, which will merge 95.73 percent of the reads
+Run2: truncate the sequences at forward 124 and reverse 151, which will merge 95.26 percent of the reads
+Run3: truncate the sequences at forward 125 and reverse 150, which will merge 95.13 percent of the reads
+
+## Import data into Qiime2 format
+
+use zipped fastq files in input directories
+go to run(1-3) directory to run job
+```{r}
+#!/bin/bash -login
+########## SBATCH Lines for Resource Request ##########
+
+#SBATCH --time=3:59:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=64G
+#SBATCH --job-name import_1
+#SBATCH -A shade-cole-bonito
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+########## Command Lines for Job Running ##########
+
+conda activate qiime2-2022.8
+
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path run1_input \
+  --input-format CasavaOneEightSingleLanePerSampleDirFmt \
+  --output-path demux-paired-end.qza
+
+conda deactivate
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_I
+
+```
+
+saved data as demux-paired-end.qza, can use this file in dada2
+
+## Denoise and merge
+do this job for each run
+
+Run1
+```{r}
+#!/bin/bash -login
+########## SBATCH Lines for Resource Request ##########
+
+#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100G
+#SBATCH --job-name dada2_1
+#SBATCH -A shade-cole-bonito
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+########## Command Lines for Job Running ##########
+
+conda activate qiime2-2022.8
+
+qiime dada2 denoise-paired \
+        --i-demultiplexed-seqs demux-paired-end.qza \
+        --p-trunc-len-f 99 \
+        --p-trunc-len-r 176 \
+        --o-table table.qza \
+        --o-representative-sequences rep-seqs1.qza \
+        --o-denoising-stats denoising-stats.qza
+
+qiime metadata tabulate \
+  --m-input-file denoising-stats.qza \
+  --o-visualization denoising-stats.qzv
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs1.qza \
+  --o-visualization rep-seqs1.qzv
+
+conda deactivate
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_I
+```
+
+Run2
+```{r}
+#!/bin/bash -login
+########## SBATCH Lines for Resource Request ##########
+
+#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100G
+#SBATCH --job-name dada2_2
+#SBATCH -A shade-cole-bonito
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+########## Command Lines for Job Running ##########
+
+conda activate qiime2-2022.8
+
+qiime dada2 denoise-paired \
+        --i-demultiplexed-seqs demux-paired-end.qza \
+        --p-trunc-len-f 124 \
+        --p-trunc-len-r 151 \
+        --o-table table.qza \
+        --o-representative-sequences rep-seqs2.qza \
+        --o-denoising-stats denoising-stats.qza
+
+qiime metadata tabulate \
+  --m-input-file denoising-stats.qza \
+  --o-visualization denoising-stats.qzv
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs2.qza \
+  --o-visualization rep-seqs2.qzv
+
+conda deactivate
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_I
+```
+
+Run3
+```{r}
+#!/bin/bash -login
+########## SBATCH Lines for Resource Request ##########
+
+#SBATCH --time=12:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100G
+#SBATCH --job-name dada2_3
+#SBATCH -A shade-cole-bonito
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+########## Command Lines for Job Running ##########
+
+conda activate qiime2-2022.8
+
+qiime dada2 denoise-paired \
+        --i-demultiplexed-seqs demux-paired-end.qza \
+        --p-trunc-len-f 125 \
+        --p-trunc-len-r 150 \
+        --o-table table.qza \
+        --o-representative-sequences rep-seqs3.qza \
+        --o-denoising-stats denoising-stats.qza
+
+qiime metadata tabulate \
+  --m-input-file denoising-stats.qza \
+  --o-visualization denoising-stats.qzv
+
+qiime feature-table tabulate-seqs \
+  --i-data rep-seqs3.qza \
+  --o-visualization rep-seqs3.qzv
+
+conda deactivate
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_I
+```
+
+# Merge the rep-seqs and ASV tables
+
+from Rhizo_assembly directory:
+
+```{r}
+#!/bin/bash -login
+########## SBATCH Lines for Resource Request ##########
+
+#SBATCH --time=3:59:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=64G
+#SBATCH --job-name merge
+#SBATCH -A shade-cole-bonito
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+########## Command Lines for Job Running ##########
+
+conda activate qiime2-2022.8
+
+qiime feature-table merge \
+    --i-tables run1/table.qza run2/table.qza run3/table.qza \
+    --p-overlap-method sum \
+    --o-merged-table merged-table.qza
+
+qiime feature-table merge-seqs \
+  --i-data run1/rep-seqs1.qza \
+  --i-data run2/rep-seqs2.qza \
+  --i-data run3/rep-seqs3.qza \
+  --o-merged-data merged_rep-seqs.qza
+
+conda deactivate
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_I
+
+
+```
+
+
+
+## Taxonomy assignment with silva
+
+Download reference seqs from qiime2.org:
+wget https://data.qiime2.org/2022.8/common/silva-138-99-515-806-nb-classifier.qza
+
+job:
+nano classify-silva-taxonomy.sb
+```{bash}
+#!/bin/bash -login
+########## SBATCH Lines for Resource Request ##########
+
+#SBATCH --time=16:00:00            
+#SBATCH --nodes=1                
+#SBATCH --ntasks=1                 
+#SBATCH --cpus-per-task=32         
+#SBATCH --mem=64G          
+#SBATCH --job-name taxonomy	 
+#SBATCH -A shade-cole-bonito 
+#SBATCH --mail-user=suleskya@msu.edu
+#SBATCH --mail-type=BEGIN,END
+
+########## Command Lines for Job Running ##########
+
+conda activate qiime2-2022.8
+
+qiime feature-classifier classify-sklearn \
+  --i-classifier silva-138-99-515-806-nb-classifier.qza \
+  --i-reads merged_rep-seqs.qza \
+  --o-classification taxonomy.qza
+
+qiime metadata tabulate \
+  --m-input-file taxonomy.qza \
+  --o-visualization taxonomy.qzv
+
+qiime tools export \
+  --input-path taxonomy.qza \
+  --output-path phyloseq
+
+qiime tools export \
+  --input-path merged-table.qza \
+  --output-path phyloseq
+
+biom convert \
+  -i phyloseq/feature-table.biom \
+  -o phyloseq/otu_table.txt \
+  --to-tsv
+  
+conda deactivate
+
+echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
+scontrol show job $SLURM_JOB_I
+
+```
+
+### Export to phyloseq
+```{r}
+qiime tools export \
+  --input-path taxonomy.qza \
+  --output-path phyloseq
+
+qiime tools export \
+  --input-path merged_table.qza \
+  --output-path phyloseq
+
+biom convert \
+  -i phyloseq/feature-table.biom \
+  -o phyloseq/otu_table.txt \
+  --to-tsv
+```
+

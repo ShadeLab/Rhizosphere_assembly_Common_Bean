@@ -1,0 +1,356 @@
+---
+title: "Rhizo Assembly Plant Health Analysis"
+author: "Abby Sulesky-Grieb"
+date: "2023-06-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+```
+
+# Summary
+Plants were grown with or without zebularine treatment, labeled as "Zeb" and "Control".
+The plants treated with zeb grew visibly slower than the control plants. I harvested plant health measurements of plant height and above ground biomass to track growth progression. Below ground biomass was not collected, as the full root system of each plant was frozen for microbiome analysis. Photos of each root system were taken for analysis with imageJ. 
+In the height and biomass data, I will be assessing if the plants harvested by growth stage in zeb and control were the same size, even though they were harvested on different days. I will also be assessing if the plants harvested by time are statistically different due to the different growth rates between zeb and control.
+
+#### Load in data
+```{r}
+data_rhizo_assembly <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rhizosphere_assembly_plant_data.csv", header=TRUE)
+
+str(data_rhizo_assembly)
+
+# change variables to factors
+data_rhizo_assembly$plant_rep <- as.factor(data_rhizo_assembly$plant_rep)
+data_rhizo_assembly$group <- as.factor(data_rhizo_assembly$group)
+data_rhizo_assembly$series <- as.factor(data_rhizo_assembly$series)
+data_rhizo_assembly$stage <- as.factor(data_rhizo_assembly$stage)
+data_rhizo_assembly$date <- as.factor(data_rhizo_assembly$date)
+
+```
+### Plant height figure
+```{r, warning=FALSE}
+# code for background theme for ggplot so I don't have to have it in every plot
+my_theme <- theme(panel.background = element_rect(fill = "white", colour = "white"), 
+             panel.grid.major = element_line(size = 0.25, linetype = 'solid', colour = "light gray"),
+             panel.grid.minor = element_line(size = 0.25, linetype = 'solid', colour = "light gray"))
+
+# series name labels
+series_labels <- c("growth" = "Growth Stage","time" = "Time Series")
+
+# Colors
+colors <- c("#F8766D", "#00bfc4")
+
+# x-axis order
+sampling_order <- c("V1", "V2","V3","V4","R1","R4", "R7", "day3", "day7", "day14", "day21", "day35", "day49", "day63")
+
+height_anno <- data.frame(xstar = c(1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7), 
+                          ystar = c(39, 39.5, 39, 39, 39.5, 39, 39, 39, 39, 39, 39, 39, 39, 39),
+                   lab = c("**", "ns", "**", "***", "ns", "*", "*", "", "****", "****", "****", "***", "**", "**"),
+                   series = c("growth", "growth","growth","growth","growth","growth","growth",
+                              "time", "time","time","time","time","time","time"))
+height_anno
+
+#  + labs(title="Plant Height by Sampling Series")
+height_graph <- ggplot(data_rhizo_assembly, aes(x=factor(stage, level=sampling_order), y=height, fill = group)) +
+  geom_boxplot() + my_theme + scale_fill_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb")) + xlab("Sample Point") + ylab("Plant Height (cm)") +  stat_summary(fun=mean, colour="black", aes(group=group),
+               geom="line", lwd=0.5, lty=1, na.rm=TRUE) + 
+  geom_text(inherit.aes=FALSE, data = height_anno, aes(x = xstar,  y = ystar, label = lab), size=4) +
+  facet_wrap(~series, scales="free_x", labeller = as_labeller(series_labels)) + theme(axis.text.x=element_blank(), axis.title.x=element_blank())
+
+height_graph 
+```
+
+### Plant height stats
+```{r, warning=FALSE}
+# subset into control v zeb growth and control v zeb time, then by time point
+time_data <- subset(data_rhizo_assembly, series == "time")
+time_3 <- subset(time_data, stage == "day3")
+time_7 <- subset(time_data, stage == "day7")
+time_14 <- subset(time_data, stage == "day14")
+time_21 <- subset(time_data, stage == "day21")
+time_35 <- subset(time_data, stage == "day35")
+time_49 <- subset(time_data, stage == "day49")
+time_63 <- subset(time_data, stage == "day63")
+
+growth_data <- subset(data_rhizo_assembly, series == "growth")
+growth_V1 <- subset(growth_data, stage == "V1")
+growth_V2 <- subset(growth_data, stage == "V2")
+growth_V3 <- subset(growth_data, stage == "V3")
+growth_V4 <- subset(growth_data, stage == "V4")
+growth_R1 <- subset(growth_data, stage == "R1")
+growth_R4 <- subset(growth_data, stage == "R4")
+growth_R7 <- subset(growth_data, stage == "R7")
+
+
+# compare control vs zeb at time points
+height_time_7 <- t.test(height ~ group, data = time_7, na.action = "na.omit")
+height_time_7 # ****
+height_time_14 <- t.test(height ~ group, data = time_14, na.action = "na.omit")
+height_time_14 # ****
+height_time_21 <- t.test(height ~ group, data = time_21, na.action = "na.omit")
+height_time_21 # ****
+height_time_35 <- t.test(height ~ group, data = time_35, na.action = "na.omit")
+height_time_35 # *** .0002
+height_time_49 <- t.test(height ~ group, data = time_49, na.action = "na.omit")
+height_time_49 # ** .001
+height_time_63 <- t.test(height ~ group, data = time_63, na.action = "na.omit")
+height_time_63 # ** .001
+
+height_growth_V1 <- t.test(height ~ group, data = growth_V1, na.action = "na.omit")
+height_growth_V1 # ** .004
+height_growth_V2 <- t.test(height ~ group, data = growth_V2, na.action = "na.omit")
+height_growth_V2 # .052
+height_growth_V3 <- t.test(height ~ group, data = growth_V3, na.action = "na.omit")
+height_growth_V3 # ** .007
+height_growth_V4 <- t.test(height ~ group, data = growth_V4, na.action = "na.omit")
+height_growth_V4 # *** .0008
+height_growth_R1 <- t.test(height ~ group, data = growth_R1, na.action = "na.omit")
+height_growth_R1 # .21
+height_growth_R4 <- t.test(height ~ group, data = growth_R4, na.action = "na.omit")
+height_growth_R4 # * .03
+height_growth_R7 <- t.test(height ~ group, data = growth_R7, na.action = "na.omit")
+height_growth_R7 # * .03
+
+
+
+
+
+
+```
+
+### Plant biomass figures
+```{r, warning=FALSE}
+# Fresh weight
+fresh_anno <- data.frame(xstar = c(1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7), 
+                          ystar = c(55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55),
+                   lab = c("", "**", "*", "***", "**", "ns", "*", "", "***", "****", "****", "***", "***", "ns"),
+                   series = c("growth", "growth","growth","growth","growth","growth","growth",
+                              "time", "time","time","time","time","time","time"))
+fresh_anno
+
+# + labs(title="Above-ground Fresh Weight by Sampling Series")
+predry_graph <- ggplot(data_rhizo_assembly, aes(x=factor(stage, level=sampling_order), y=predry, fill = group)) +
+  geom_boxplot() + my_theme  + scale_fill_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb")) + xlab("Sample Point") + ylab("Fresh Biomass (g)") + stat_summary(fun=mean, colour="black", aes(group=group),
+               geom="line", lwd=0.5, lty=1, na.rm=TRUE) + facet_wrap(~series, scales="free_x", labeller = as_labeller(series_labels)) + 
+  geom_text(inherit.aes=FALSE, data = fresh_anno, aes(x = xstar,  y = ystar, label = lab), size=4) + theme(legend.position="none", axis.text.x=element_blank(), axis.title.x=element_blank())
+
+predry_graph
+
+# Dry weight
+dry_anno <- data.frame(xstar = c(1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7), 
+                          ystar = c(15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15),
+                   lab = c("ns", "**", "**", "***", "*", "ns", "ns", "", "ns", "*", "***", "****", "****", "***"),
+                   series = c("growth", "growth","growth","growth","growth","growth","growth",
+                              "time", "time","time","time","time","time","time"))
+dry_anno
+
+#  + labs(title="Above-ground Dry Weight by Sampling Series")
+postdry_graph <- ggplot(data_rhizo_assembly, aes(x=factor(stage, level=sampling_order), y=postdry, fill = group)) +
+  geom_boxplot() + my_theme + scale_fill_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb")) + xlab("Sample Point") + ylab("Dry Biomass (g)") + stat_summary(fun=mean, colour="black", aes(group=group),
+               geom="line", lwd=0.5, lty=1, na.rm=TRUE) + facet_wrap(~series, scales="free_x", labeller = as_labeller(series_labels)) + 
+  geom_text(inherit.aes=FALSE, data = dry_anno, aes(x = xstar,  y = ystar, label = lab), size=4) + theme(legend.position="none")
+
+postdry_graph
+
+health_combo_graph <- height_graph / predry_graph / postdry_graph + plot_annotation(tag_levels = 'A')
+health_combo_graph
+
+ggsave(health_combo_graph, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/health_multiplot.png", height = 12, width = 9, units = "in")
+
+```
+# biomass stats
+```{r}
+### fresh weight
+# compare control vs zeb at time points
+fresh_time_7 <- t.test(predry ~ group, data = time_7, na.action = "na.omit")
+fresh_time_7 # ***
+fresh_time_14 <- t.test(predry ~ group, data = time_14, na.action = "na.omit")
+fresh_time_14 # ****
+fresh_time_21 <- t.test(predry ~ group, data = time_21, na.action = "na.omit")
+fresh_time_21 # ****
+fresh_time_35 <- t.test(predry ~ group, data = time_35, na.action = "na.omit")
+fresh_time_35 # *** 
+fresh_time_49 <- t.test(predry ~ group, data = time_49, na.action = "na.omit")
+fresh_time_49 # ***
+fresh_time_63 <- t.test(predry ~ group, data = time_63, na.action = "na.omit")
+fresh_time_63 # ns .08
+
+#height_growth_V1 <- t.test(predry ~ group, data = growth_V1, na.action = "na.omit")
+#height_growth_V1 # ** .004
+fresh_growth_V2 <- t.test(predry ~ group, data = growth_V2, na.action = "na.omit")
+fresh_growth_V2 # ** .002
+fresh_growth_V3 <- t.test(predry ~ group, data = growth_V3, na.action = "na.omit")
+fresh_growth_V3 # * .04
+fresh_growth_V4 <- t.test(predry ~ group, data = growth_V4, na.action = "na.omit")
+fresh_growth_V4 # *** .0004
+fresh_growth_R1 <- t.test(predry ~ group, data = growth_R1, na.action = "na.omit")
+fresh_growth_R1 # ** .008
+fresh_growth_R4 <- t.test(predry ~ group, data = growth_R4, na.action = "na.omit")
+fresh_growth_R4 # ns .08
+fresh_growth_R7 <- t.test(predry ~ group, data = growth_R7, na.action = "na.omit")
+fresh_growth_R7 # * .02
+
+### dry weight
+# compare control vs zeb at time points
+dry_time_7 <- t.test(postdry ~ group, data = time_7, na.action = "na.omit")
+dry_time_7 # ns
+dry_time_14 <- t.test(postdry ~ group, data = time_14, na.action = "na.omit")
+dry_time_14 # * .03
+dry_time_21 <- t.test(postdry ~ group, data = time_21, na.action = "na.omit")
+dry_time_21 # *** .0009
+dry_time_35 <- t.test(postdry ~ group, data = time_35, na.action = "na.omit")
+dry_time_35 # **** 
+dry_time_49 <- t.test(postdry ~ group, data = time_49, na.action = "na.omit")
+dry_time_49 # ****
+dry_time_63 <- t.test(postdry ~ group, data = time_63, na.action = "na.omit")
+dry_time_63 # *** .0001
+
+dry_growth_V1 <- t.test(postdry ~ group, data = growth_V1, na.action = "na.omit")
+dry_growth_V1 # ns
+dry_growth_V2 <- t.test(postdry ~ group, data = growth_V2, na.action = "na.omit")
+dry_growth_V2 # ** .004
+dry_growth_V3 <- t.test(postdry ~ group, data = growth_V3, na.action = "na.omit")
+dry_growth_V3 # ** .005
+dry_growth_V4 <- t.test(postdry ~ group, data = growth_V4, na.action = "na.omit")
+dry_growth_V4 # *** .0001
+dry_growth_R1 <- t.test(postdry ~ group, data = growth_R1, na.action = "na.omit")
+dry_growth_R1 # * .01
+dry_growth_R4 <- t.test(postdry ~ group, data = growth_R4, na.action = "na.omit")
+dry_growth_R4 # ns 
+dry_growth_R7 <- t.test(postdry ~ group, data = growth_R7, na.action = "na.omit")
+dry_growth_R7 # ns
+```
+
+### Root analysis
+```{r}
+data_root_length <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/root_length_data_all.csv", header=TRUE)
+
+str(data_root_length)
+
+data_root_length$series <- as.factor(data_root_length$series)
+data_root_length$group <- as.factor(data_root_length$group)
+data_root_length$stage <- as.factor(data_root_length$stage)
+data_root_length$treatment <- as.factor(data_root_length$treatment)
+data_root_length$mean_length_mm <- as.numeric(data_root_length$mean_length_mm)
+data_root_length$nodules <- as.numeric(data_root_length$nodules)
+
+
+root_anno <- data.frame(xstar = c(1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7), 
+                          ystar = c(470, 470, 470, 470, 470, 470, 470, 470, 470, 470, 470, 470, 470, 470),
+                   lab = c("****", "****", "***", "ns", "ns", "*", "*", "**", "****", "****", "****", "**", "ns", "**"),
+                   series = c("growth", "growth","growth","growth","growth","growth","growth",
+                              "time", "time","time","time","time","time","time"))
+root_anno
+
+root_length_graph <- ggplot(data_root_length, aes(x=factor(stage, level=sampling_order), y=mean_length_mm, fill = treatment)) + geom_boxplot() + my_theme + scale_fill_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb")) + xlab("Sample Point") + ylab("Root Length (mm)") + stat_summary(fun=mean, colour="black", aes(group=group), geom="line", lwd=0.5, lty=1, na.rm=TRUE) + facet_wrap(~series, scales="free_x", labeller = as_labeller(series_labels)) + geom_text(inherit.aes=FALSE, data = root_anno, aes(x = xstar,  y = ystar, label = lab), size=4) + theme(axis.text.x=element_blank(), axis.title.x=element_blank())
+
+root_length_graph
+
+
+nodule_anno <- data.frame(xstar = c(1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7), 
+                          ystar = c(225, 225, 225, 225, 225, 225, 225, 225, 225, 225, 225, 225, 225, 225),
+                   lab = c("ns", "ns", "**", "**", "*", "ns", "ns", "", "ns", "**", "**", "****", "ns", "ns"),
+                   series = c("growth", "growth","growth","growth","growth","growth","growth",
+                              "time", "time","time","time","time","time","time"))
+nodule_anno
+
+nodule_graph <- ggplot(data_root_length, aes(x=factor(stage, level=sampling_order), y=nodules, fill = treatment)) + geom_boxplot() + my_theme + scale_fill_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb")) + xlab("Sample Point") + ylab("Nodule Count") + stat_summary(fun=mean, colour="black", aes(group=group), geom="line", lwd=0.5, lty=1, na.rm=TRUE) + facet_wrap(~series, scales="free_x", labeller = as_labeller(series_labels)) + geom_text(inherit.aes=FALSE, data = nodule_anno, aes(x = xstar,  y = ystar, label = lab), size=4) + theme(legend.position="none")
+
+nodule_graph
+
+root_combo_graph <- root_length_graph / nodule_graph + plot_annotation(tag_levels = 'A')
+root_combo_graph
+
+ggsave(root_combo_graph, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/root_multiplot.png", height = 8.5, width = 9, units = "in")
+```
+
+### root stats
+```{r}
+# subset into control v zeb growth and control v zeb time, then by time point
+root_time_data <- subset(data_root_length, series == "time")
+root_time_3 <- subset(root_time_data, stage == "day3")
+root_time_7 <- subset(root_time_data, stage == "day7")
+root_time_14 <- subset(root_time_data, stage == "day14")
+root_time_21 <- subset(root_time_data, stage == "day21")
+root_time_35 <- subset(root_time_data, stage == "day35")
+root_time_49 <- subset(root_time_data, stage == "day49")
+root_time_63 <- subset(root_time_data, stage == "day63")
+
+root_growth_data <- subset(data_root_length, series == "growth")
+root_growth_V1 <- subset(root_growth_data, stage == "V1")
+root_growth_V2 <- subset(root_growth_data, stage == "V2")
+root_growth_V3 <- subset(root_growth_data, stage == "V3")
+root_growth_V4 <- subset(root_growth_data, stage == "V4")
+root_growth_R1 <- subset(root_growth_data, stage == "R1")
+root_growth_R4 <- subset(root_growth_data, stage == "R4")
+root_growth_R7 <- subset(root_growth_data, stage == "R7")
+
+### root length
+# compare control vs zeb at time points
+root_length_3 <- t.test(mean_length_mm ~ group, data = root_time_3, na.action = "na.omit")
+root_length_3 # **
+root_length_7 <- t.test(mean_length_mm ~ group, data = root_time_7, na.action = "na.omit")
+root_length_7 # ****
+root_length_14 <- t.test(mean_length_mm ~ group, data = root_time_14, na.action = "na.omit")
+root_length_14 # ****
+root_length_21 <- t.test(mean_length_mm ~ group, data = root_time_21, na.action = "na.omit")
+root_length_21 # ****
+root_length_35 <- t.test(mean_length_mm ~ group, data = root_time_35, na.action = "na.omit")
+root_length_35 # ** 
+root_length_49 <- t.test(mean_length_mm ~ group, data = root_time_49, na.action = "na.omit")
+root_length_49 # ns .06
+root_length_63 <- t.test(mean_length_mm ~ group, data = root_time_63, na.action = "na.omit")
+root_length_63 # **
+
+root_length_V1 <- t.test(mean_length_mm ~ group, data = root_growth_V1, na.action = "na.omit")
+root_length_V1 # ****
+root_length_V2 <- t.test(mean_length_mm ~ group, data = root_growth_V2, na.action = "na.omit")
+root_length_V2 # ****
+root_length_V3 <- t.test(mean_length_mm ~ group, data = root_growth_V3, na.action = "na.omit")
+root_length_V3 # ***
+root_length_V4 <- t.test(mean_length_mm ~ group, data = root_growth_V4, na.action = "na.omit")
+root_length_V4 # ns
+root_length_R1 <- t.test(mean_length_mm ~ group, data = root_growth_R1, na.action = "na.omit")
+root_length_R1 # ns
+root_length_R4 <- t.test(mean_length_mm ~ group, data = root_growth_R4, na.action = "na.omit")
+root_length_R4 # *
+root_length_R7 <- t.test(mean_length_mm ~ group, data = root_growth_R7, na.action = "na.omit")
+root_length_R7 # *
+
+
+### nodules
+nodules_3 <- t.test(nodules ~ group, data = root_time_3, na.action = "na.omit")
+nodules_3 # NA
+nodules_7 <- t.test(nodules ~ group, data = root_time_7, na.action = "na.omit")
+nodules_7 # ns
+nodules_14 <- t.test(nodules ~ group, data = root_time_14, na.action = "na.omit")
+nodules_14 # **
+nodules_21 <- t.test(nodules ~ group, data = root_time_21, na.action = "na.omit")
+nodules_21 # **
+nodules_35 <- t.test(nodules ~ group, data = root_time_35, na.action = "na.omit")
+nodules_35 # ****
+nodules_49 <- t.test(nodules ~ group, data = root_time_49, na.action = "na.omit")
+nodules_49 # ns
+nodules_63 <- t.test(nodules ~ group, data = root_time_63, na.action = "na.omit")
+nodules_63 # ns
+
+nodules_V1 <- t.test(nodules ~ group, data = root_growth_V1, na.action = "na.omit")
+nodules_V1 # ns .36
+nodules_V2 <- t.test(nodules ~ group, data = root_growth_V2, na.action = "na.omit")
+nodules_V2 # ns .54
+nodules_V3 <- t.test(nodules ~ group, data = root_growth_V3, na.action = "na.omit")
+nodules_V3 # **
+nodules_V4 <- t.test(nodules ~ group, data = root_growth_V4, na.action = "na.omit")
+nodules_V4 # **
+nodules_R1 <- t.test(nodules ~ group, data = root_growth_R1, na.action = "na.omit")
+nodules_R1 # *
+nodules_R4 <- t.test(nodules ~ group, data = root_growth_R4, na.action = "na.omit")
+nodules_R4 # ns .68
+nodules_R7 <- t.test(nodules ~ group, data = root_growth_R7, na.action = "na.omit")
+nodules_R7 # ns .26
+
+```
+

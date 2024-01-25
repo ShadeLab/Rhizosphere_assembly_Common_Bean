@@ -1,0 +1,2090 @@
+---
+title: "Rhizo_assembly_analysis"
+author: "Abby Sulesky-Grieb"
+date: "2023-09-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+library(microViz)
+library(corncob)
+library(ggraph)
+library(DT)
+library(phyloseq)
+library(ggplot2)
+library(tidyverse)
+library(decontam)
+library(scales)
+library(vegan)
+library(microbiome)
+library(ComplexHeatmap)
+library(dplyr)
+library(patchwork)
+library(pairwiseAdonis)
+library(indicspecies)
+library(VennDiagram)
+library(stats)
+library(rstatix)
+library(ecotraj)
+library(corrplot)
+library(ComplexHeatmap)
+library(paletteer)
+library(ggthemes)
+library(indicspecies)
+library(reltools)
+library(minpack.lm)
+library(Hmisc)
+library(stats4)
+```
+
+
+```{r load}
+setwd("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/")
+
+# load phyloseq
+RA_phyloseq <- readRDS("RA_phyloseq_rarefied.rds")
+
+# add group and timepoint categories in metadata for analysis
+#write.csv(data.frame(sample_data(RA_phyloseq)), file="metadata_update.csv")
+
+meta_update <- read.csv("metadata_update_edit.csv", sep=",", row.names = 1)
+meta <- sample_data(meta_update)
+tax <- tax_table(RA_phyloseq)
+asv <- otu_table(RA_phyloseq)
+
+RAphyloseq <- merge_phyloseq(meta, tax, asv)
+
+#sample_names(RAphyloseq)
+#sample_data(RAphyloseq)
+
+# Subset compartments
+rsphere_ps <- RAphyloseq %>% ps_filter(compartment == "rhizosphere")
+rplane_ps <- RAphyloseq %>% ps_filter(compartment == "rhizoplane")
+
+# code for background theme for ggplot so I don't have to have it in every plot
+my_theme <- theme(panel.background = element_rect(fill = "white", colour = "white"), 
+             panel.grid.major = element_line(size = 0.25, linetype = 'solid', colour = "light gray"),
+             panel.grid.minor = element_line(size = 0.25, linetype = 'solid', colour = "light gray"))
+
+
+# Colors
+colors <- c("#F8766D", "#00bfc4")
+```
+
+
+### rhizosphere
+```{r alpha_rs}
+# x-axis order
+sampling_order_growth <- c("V1", "V2","V3","V4","R1","R4", "R7")
+sampling_order_time <- c("day3", "day7", "day14", "day21", "day35", "day49", "day63")
+
+sample_data(rsphere_ps)$timepoint <- as.factor(sample_data(rsphere_ps)$timepoint)
+growth_rs <- rsphere_ps %>% ps_filter(series == "growth")
+time_rs <- rsphere_ps %>% ps_filter(series == "time")
+
+sampling_order <- c("V1", "V2","V3","V4","R1","R4", "R7", "day3", "day7", "day14", "day21", "day35", "day49", "day63")
+
+#observed_alphaplot_all_rs <- plot_richness(rsphere_ps, x="timepoint", measures=c("Observed"), color="treatment") + geom_boxplot() + ylab("Number of ASVs") + stat_summary(fun=mean, colour="black", aes(group=group), geom="line", lwd=0.5, lty=1, na.rm=TRUE) + facet_grid(rows=vars(treatment), cols=vars(series), scales="free_x") + scale_x_discrete(labels=sampling_order_growth, breaks=waiver()) + theme(legend.position = "none") + labs(title="Rhizosphere") + scale_x_discrete(name ="Sample point", labels=sampling_order) #+ scale_color_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb"))  + xlab("Sample point")
+
+#observed_alphaplot_all_rs 
+
+# alpha diversity, facet wrap by group
+observed_alphaplot_growth_rs <- plot_richness(growth_rs, x="timepoint", measures=c("Observed"), color="treatment") + geom_boxplot(aes()) + xlab("Sample point") + ylab("Number of ASVs") + stat_summary(fun=mean, colour="black", aes(group=group), geom="line", lwd=0.5, lty=1, na.rm=TRUE) + facet_wrap(~group, nrow=2) + ylim(600, 2300) + scale_x_discrete(labels=sampling_order_growth, breaks=waiver()) + theme(legend.position = "none") + labs(title="Rhizosphere - Growth") #+ scale_color_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb")) 
+
+observed_alphaplot_growth_rs 
+
+observed_alphaplot_time_rs <- plot_richness(time_rs, x="timepoint", measures=c("Observed"), color="treatment") + geom_boxplot(aes()) + xlab("Sample point") + ylab("Number of ASVs") + stat_summary(fun=mean, colour="black", aes(group=group), geom="line", lwd=0.5, lty=1, na.rm=TRUE) + facet_wrap(~group, nrow=2) + ylim(600, 2300) + scale_x_discrete(labels=sampling_order_time, breaks=waiver()) + theme(axis.title.y = element_blank()) + labs(title="Rhizosphere - Time") 
+
+observed_alphaplot_time_rs
+
+alpha_panels_rs <- (observed_alphaplot_growth_rs | observed_alphaplot_time_rs) + plot_annotation(tag_levels = 'A')
+alpha_panels_rs
+
+#ggsave(alpha_panels_rs, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/alpha_panels_rs.png", height = 6, width = 8, units = "in")
+
+# will need to separate groups to get time point labels, do this later
+
+# stats
+alpha_counts_rs <- estimate_richness(rsphere_ps, measures=c("Observed"))
+alpha_counts_rs <- cbind(rownames(alpha_counts_rs), alpha_counts_rs) 
+colnames(alpha_counts_rs)[1] <- "SampleID"
+alpha_counts_rs
+
+metadata_rs <- data.frame(sample_data(rsphere_ps))
+
+alpha_data_rs <- left_join(alpha_counts_rs, metadata_rs, by="SampleID")
+#write.csv(alpha_data_rs, file="alpha_data_rs.csv")
+
+
+Control_growth_rs <- filter(alpha_data_rs, group == "Control_growth")
+Zeb_growth_rs <- filter(alpha_data_rs, group == "Zeb_growth")
+Control_time_rs <- filter(alpha_data_rs, group == "Control_time")
+Zeb_time_rs <- filter(alpha_data_rs, group == "Zeb_time")
+
+# control_growth (CG)
+CG_alpha_aov_rs <- aov(Observed ~ stage, data=Control_growth_rs)
+summary(CG_alpha_aov_rs)
+CG_alpha_tukey_rs <- tukey_hsd(Control_growth_rs, Observed ~ stage)
+CG_alpha_tukey_rs
+# no significance
+
+# Zeb_growth (ZG)
+ZG_alpha_aov_rs <- aov(Observed ~ stage, data=Zeb_growth_rs)
+summary(ZG_alpha_aov_rs)
+ZG_alpha_tukey_rs <- tukey_hsd(Zeb_growth_rs, Observed ~ stage)
+ZG_alpha_tukey_rs
+# no significance
+
+# Control_time (CT)
+CT_alpha_aov_rs <- aov(Observed ~ stage, data=Control_time_rs)
+summary(CT_alpha_aov_rs)
+CT_alpha_tukey_rs <- tukey_hsd(Control_time_rs, Observed ~ stage)
+CT_alpha_tukey_rs
+# no significance
+
+# Zeb_time (CT)
+ZT_alpha_aov_rs <- aov(Observed ~ stage, data=Zeb_time_rs)
+summary(ZT_alpha_aov_rs)
+ZT_alpha_tukey_rs <- tukey_hsd(Zeb_time_rs, Observed ~ stage)
+ZT_alpha_tukey_rs
+# no significance
+
+# between all groups
+all_alpha_aov_rs <- aov(Observed ~ group_stage, data=alpha_data_rs)
+summary(all_alpha_aov_rs)
+all_alpha_tukey_rs <- tukey_hsd(alpha_data_rs, Observed ~ group_stage)
+all_alpha_tukey_rs
+# no significance
+
+
+v1_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "V1"), na.action = "na.omit") 
+v1_ttest_rs
+v2_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "V2"), na.action = "na.omit") 
+v2_ttest_rs
+v3_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "V3"), na.action = "na.omit") 
+v3_ttest_rs
+v4_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "V4"), na.action = "na.omit") 
+v4_ttest_rs
+r1_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "R1"), na.action = "na.omit") 
+r1_ttest_rs
+r4_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "R4"), na.action = "na.omit") 
+r4_ttest_rs 
+r7_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "R7"), na.action = "na.omit") 
+r7_ttest_rs
+
+
+day3_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "day3"), na.action = "na.omit") 
+day3_ttest_rs
+day7_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "day7"), na.action = "na.omit") 
+day7_ttest_rs
+day14_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "day14"), na.action = "na.omit") 
+day14_ttest_rs 
+day21_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "day21"), na.action = "na.omit") 
+day21_ttest_rs
+day35_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "day35"), na.action = "na.omit") 
+day35_ttest_rs  
+day49_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "day49"), na.action = "na.omit") 
+day49_ttest_rs 
+day63_ttest_rs <- t.test(Observed ~ treatment, data=subset(alpha_data_rs, stage == "day63"), na.action = "na.omit") 
+day63_ttest_rs
+```
+
+
+### rhizoplane
+```{r alpha_rp}
+# x-axis order
+sampling_order_growth <- c("V1", "V2","V3","V4","R1","R4", "R7")
+sampling_order_time <- c("day3", "day7", "day14", "day21", "day35", "day49", "day63")
+
+sample_data(rplane_ps)$timepoint <- as.factor(sample_data(rplane_ps)$timepoint)
+
+growth_rp <- rplane_ps %>% ps_filter(series == "growth")
+time_rp <- rplane_ps %>% ps_filter(series == "time")
+
+anno_growth_rp <-  data.frame(xstar = c(6), 
+                          ystar = c(1750),
+                   lab = c("*"),
+                   group = c("Control_growth"))
+anno_growth_rp
+  
+  
+# alpha diversity, facet wrap by group
+observed_alphaplot_growth_rp <- plot_richness(growth_rp, x="timepoint", measures=c("Observed"), color="treatment") + geom_boxplot(aes()) + xlab("Sample point") + ylab("Number of ASVs") + stat_summary(fun=mean, colour="black", aes(group=group), geom="line", lwd=0.5, lty=1, na.rm=TRUE) + 
+  geom_text(inherit.aes=FALSE, data = anno_growth_rp, aes(x = xstar,  y = ystar, label = lab), size=6) + facet_wrap(~group, nrow=2) + scale_x_discrete(labels=sampling_order_growth, breaks=waiver()) + theme(legend.position = "none") + labs(title="Rhizoplane - Growth") #+ scale_color_manual(name = "Treatment Group", values = colors, labels = c("Control", "Zeb")) #+ labs(title="Rhizoplane 16S Alpha Diversity")
+
+observed_alphaplot_growth_rp 
+
+
+anno_time_rp <-  data.frame(xstar = c(3, 5), 
+                          ystar = c(1750, 1750),
+                   lab = c("*", "*"),
+                   group = c("Control_time", "Control_time"))
+anno_time_rp
+  
+  
+# alpha diversity, facet wrap by group
+observed_alphaplot_time_rp <- plot_richness(time_rp, x="timepoint", measures=c("Observed"), color = "treatment") + geom_boxplot() + xlab("Sample point") + stat_summary(fun=mean, colour="black", aes(group=group),
+               geom="line", lwd=0.5, lty=1, na.rm=TRUE) + 
+  geom_text(inherit.aes=FALSE, data = anno_time_rp, aes(x = xstar,  y = ystar, label = lab), size=6) + facet_wrap(~group, nrow=2) + scale_x_discrete(labels=sampling_order_time, breaks=waiver()) + theme(axis.title.y = element_blank()) + labs(title="Rhizoplane - Time") 
+
+observed_alphaplot_time_rp 
+
+
+alpha_panels_rp <- (observed_alphaplot_growth_rp | observed_alphaplot_time_rp) + plot_annotation(tag_levels = 'A')
+alpha_panels_rp
+
+#ggsave(alpha_panels_rp, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/alpha_panels_rp.png", height = 6, width = 8, units = "in")
+
+
+
+# stats
+alpha_counts_rp <- estimate_richness(rplane_ps, measures=c("Observed"))
+alpha_counts_rp <- cbind(rownames(alpha_counts_rp), alpha_counts_rp) 
+colnames(alpha_counts_rp)[1] <- "SampleID"
+alpha_counts_rp
+
+metadata_rp <- data.frame(sample_data(rplane_ps))
+
+alpha_data_rp <- left_join(alpha_counts_rp, metadata_rp, by="SampleID")
+write.csv(alpha_data_rp, file="alpha_data_rp.csv")
+
+Control_growth_rp <- filter(alpha_data_rp, group == "Control_growth")
+Zeb_growth_rp <- filter(alpha_data_rp, group == "Zeb_growth")
+Control_time_rp <- filter(alpha_data_rp, group == "Control_time")
+Zeb_time_rp <- filter(alpha_data_rp, group == "Zeb_time")
+
+# control_growth (CG)
+CG_alpha_aov_rp <- aov(Observed ~ stage, data=Control_growth_rp)
+summary(CG_alpha_aov_rp)
+CG_alpha_tukey_rp <- tukey_hsd(Control_growth_rp, Observed ~ stage)
+CG_alpha_tukey_rp
+# no significance
+
+# Zeb_growth (ZG)
+ZG_alpha_aov_rp <- aov(Observed ~ stage, data=Zeb_growth_rp)
+summary(ZG_alpha_aov_rp)
+ZG_alpha_tukey_rp <- tukey_hsd(Zeb_growth_rp, Observed ~ stage)
+ZG_alpha_tukey_rp
+# no significance
+
+# Control_time (CT)
+CT_alpha_aov_rp <- aov(Observed ~ stage, data=Control_time_rp)
+summary(CT_alpha_aov_rp)
+CT_alpha_tukey_rp <- tukey_hsd(Control_time_rp, Observed ~ stage)
+CT_alpha_tukey_rp
+# no significance
+
+# Zeb_time (CT)
+ZT_alpha_aov_rp <- aov(Observed ~ stage, data=Zeb_time_rp)
+summary(ZT_alpha_aov_rp)
+ZT_alpha_tukey_rp <- tukey_hsd(Zeb_time_rp, Observed ~ stage)
+ZT_alpha_tukey_rp
+# no significance
+
+# between all groups
+all_alpha_aov_rp <- aov(Observed ~ group_stage, data=alpha_data_rp)
+summary(all_alpha_aov_rp)
+all_alpha_tukey_rp <- tukey_hsd(alpha_data_rp, Observed ~ group_stage)
+all_alpha_tukey_rp
+
+v1_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "V1"), na.action = "na.omit") 
+v1_ttest_rp
+v2_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "V2"), na.action = "na.omit") 
+v2_ttest_rp
+v3_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "V3"), na.action = "na.omit") 
+v3_ttest_rp
+v4_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "V4"), na.action = "na.omit") 
+v4_ttest_rp
+r1_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "R1"), na.action = "na.omit") 
+r1_ttest_rp
+r4_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "R4"), na.action = "na.omit") 
+r4_ttest_rp # * .03
+r7_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "R7"), na.action = "na.omit") 
+r7_ttest_rp
+
+
+day3_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "day3"), na.action = "na.omit") 
+day3_ttest_rp
+day7_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "day7"), na.action = "na.omit") 
+day7_ttest_rp
+day14_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "day14"), na.action = "na.omit") 
+day14_ttest_rp # * .02
+day21_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "day21"), na.action = "na.omit") 
+day21_ttest_rp
+day35_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "day35"), na.action = "na.omit") 
+day35_ttest_rp  # * .02
+day49_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "day49"), na.action = "na.omit") 
+day49_ttest_rp 
+day63_ttest_rp <- t.test(Observed ~ treatment, data=subset(alpha_data_rp, stage == "day63"), na.action = "na.omit") 
+day63_ttest_rp
+
+```
+
+# ful dataset ordination
+```{r}
+perm <- how(nperm = 999) 
+metadata <- data.frame(sample_data(RAphyloseq))
+
+BCdist = vegdist(t(otu_table(RAphyloseq)), method = "bray", binary = FALSE)
+
+set.seed(8)
+BC_adonis <- adonis2(formula = BCdist ~ treatment*group*group_stage, permutations = perm, data = metadata)
+
+BC_adonis
+# treatment     1    0.604 0.01010 2.8671  0.012 *  
+# group         2    0.530 0.00885 1.2565  0.198    
+# group_stage  24    7.907 0.13217 1.5635  0.001 ***
+
+# group_pairwise <- pairwise.adonis2(BCdist_rp ~ group, data = metadata, permutations = perm)
+# group_pairwise
+
+
+sample_data(RAphyloseq)$timepoint <- as.factor(sample_data(RAphyloseq)$timepoint)
+
+# ordinate 
+full_ord <- ordinate(physeq = RAphyloseq, method="PCoA", distance= BCdist)
+
+# plot ordination
+full_PCoA <- plot_ordination(RAphyloseq, full_ord, color ="treatment", shape="series") + theme(aspect.ratio=1)
+full_PCoA + geom_point(aes(size=timepoint))
+```
+
+
+
+# rhizoplane beta diversity
+```{r beta_rp}
+perm <- how(nperm = 999) 
+metadata_rp <- data.frame(sample_data(rplane_ps))
+
+BCdist_rp = vegdist(t(otu_table(rplane_ps)), method = "bray", binary = FALSE)
+
+set.seed(8)
+BC_adonis_rp <- adonis2(formula = BCdist_rp ~ treatment*age_days*stage_all, permutations = perm, data = metadata_rp)
+BC_adonis_rp
+# adonis2(formula = BCdist_rp ~ treatment * age_days * stage_all, data = metadata_rp, permutations = perm)
+#                      Df SumOfSqs      R2       F Pr(>F)    
+# treatment             1   0.6600 0.02418  4.3122  0.001 ***
+# age_days              1   2.9064 0.10648 18.9896  0.001 ***
+# stage_all            16   5.6261 0.20613  2.2975  0.001 ***
+# treatment:age_days    1   0.2381 0.00872  1.5558  0.077 .  
+# treatment:stage_all   8   1.7930 0.06569  1.4644  0.002 ** 
+# Residual            105  16.0704 0.58879                   
+# Total               132  27.2940 1.00000 
+
+rplane_growth <- rplane_ps %>% ps_filter(series == "growth")
+metadata_rp_growth <- data.frame(sample_data(rplane_growth))
+
+BCdist_rp_growth = vegdist(t(otu_table(rplane_growth)), method = "bray", binary = FALSE)
+
+set.seed(8)
+BC_adonis_rp_growth <- adonis2(formula = BCdist_rp_growth ~ treatment*age_days*stage_all, permutations = perm, data = metadata_rp_growth)
+BC_adonis_rp_growth
+# adonis2(formula = BCdist_rp_growth ~ treatment * age_days * stage_all, data = metadata_rp_growth, permutations = perm)
+#                     Df SumOfSqs      R2      F Pr(>F)    
+# treatment            1   0.4276 0.03284 2.6425  0.003 ** 
+# age_days             1   1.2456 0.09566 7.6976  0.001 ***
+# stage_all            6   1.9870 0.15259 2.0465  0.001 ***
+# treatment:age_days   1   0.2188 0.01680 1.3521  0.138    
+# treatment:stage_all  4   0.7278 0.05589 1.1244  0.217    
+# Residual            52   8.4145 0.64621                  
+# Total               65  13.0213 1.00000
+
+
+g_s_pairwise_rp <- pairwise.adonis2(BCdist_rp ~ group_stage, data = metadata_rp, permutations = perm)
+#g_s_pairwise_rp
+
+
+sample_data(rplane_ps)$timepoint <- as.factor(sample_data(rplane_ps)$timepoint)
+
+# ordinate 
+full_ord_rp <- ordinate(physeq = rplane_ps, method="PCoA", distance= BCdist_rp)
+
+# plot ordination
+full_PCoA_rp <- plot_ordination(rplane_ps, full_ord_rp, color ="treatment", shape="series") + theme(aspect.ratio=1)
+full_PCoA_rp + geom_point(aes(size=timepoint))
+
+
+# Separate in comparisons that we are interested in
+Cgrowth_Zgrowth_rp <- rplane_ps %>% ps_filter(group != "Control_time") %>% ps_filter(group != "Zeb_time")
+
+Ctime_Ztime_rp <- rplane_ps %>% ps_filter(group != "Control_growth") %>% ps_filter(group != "Zeb_growth")
+
+control_groups_rp <- rplane_ps %>% ps_filter(group != "Zeb_growth") %>% ps_filter(group != "Zeb_time")
+
+zeb_groups_rp <- rplane_ps %>% ps_filter(group != "Control_growth") %>% ps_filter(group != "Control_time")
+
+
+# test comparisons
+
+# control vs control, should be the same
+perm <- how(nperm = 9999) 
+C_C_metadata_rp <- data.frame(sample_data(control_groups_rp))
+C_C_BCdist_rp = vegdist(t(otu_table(control_groups_rp)), method = "bray", binary = FALSE)
+
+set.seed(8)
+C_C_BC_adonis_rp <- adonis2(formula = C_C_BCdist_rp ~ group, permutations = perm, data = C_C_metadata_rp)
+C_C_BC_adonis_rp
+# group = NS r2=0.02354 F=1.4944 p=0.1142
+
+# zeb vs zeb, should be different?
+perm <- how(nperm = 9999) 
+ZZ_metadata_rp <- data.frame(sample_data(zeb_groups_rp))
+ZZ_BCdist_rp = vegdist(t(otu_table(zeb_groups_rp)), method = "bray", binary = FALSE)
+
+set.seed(8)
+ZZ_BC_adonis_rp <- adonis2(formula = ZZ_BCdist_rp ~ group, permutations = perm, data = ZZ_metadata_rp)
+ZZ_BC_adonis_rp
+# group     df=1   sum sq=0.3830 r2=0.03051 F=2.1087 0.0188 * 
+
+# control_growth vs zeb_growth
+perm <- how(nperm = 9999) 
+Cg_Zg_metadata_rp <- data.frame(sample_data(Cgrowth_Zgrowth_rp))
+Cg_Zg_BCdist_rp = vegdist(t(otu_table(Cgrowth_Zgrowth_rp)), method = "bray", binary = FALSE)
+
+set.seed(8)
+Cg_Zg_BC_adonis_rp <- adonis2(formula = Cg_Zg_BCdist_rp ~ group*stage, permutations = perm, data = Cg_Zg_metadata_rp)
+Cg_Zg_BC_adonis_rp
+#             Df SumOfSqs      R2      F Pr(>F)    
+# group        1   0.4388 0.03567 2.9122 0.0015 ** 
+# stage        6   2.7742 0.22551 3.0686 0.0001 ***
+# group:stage  6   1.2538 0.10192 1.3868 0.0128 *  
+# Residual    52   7.8350 0.63690                  
+# Total       65  12.3018 1.00000
+
+Cg_Zg_pairwise_rp <- pairwise.adonis2(Cg_Zg_BCdist_rp ~ group_stage, data = Cg_Zg_metadata_rp, permutations = perm)
+#Cg_Zg_pairwise_rp
+# $Control_growth_R1_vs_Zeb_growth_R1
+#             Df SumOfSqs    R2      F Pr(>F)  
+# group_stage  1  0.19062 0.198 1.7282 0.0401 *
+# 
+# $Zeb_growth_V1_vs_Control_growth_V1
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.20092 0.18031 1.7598 0.0161 *
+#   
+# $Zeb_growth_V2_vs_Control_growth_V2
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.25737 0.17024 1.6413 0.0172 *
+# 
+# $Control_growth_V3_vs_Zeb_growth_V3
+#             Df SumOfSqs      R2      F Pr(>F)
+# group_stage  1  0.18770 0.17949 1.3125 0.3031
+# 
+# $Zeb_growth_R4_vs_Control_growth_R4
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.34333 0.19559 1.9452 0.0159 *
+#   
+# $Control_growth_V4_vs_Zeb_growth_V4
+#             Df SumOfSqs      R2      F Pr(>F)
+# group_stage  1  0.18781 0.12141 1.1055 0.3406
+# 
+# $Zeb_growth_R7_vs_Control_growth_R7
+#             Df SumOfSqs     R2      F Pr(>F)  
+# group_stage  1  0.32125 0.2024 1.7763 0.0726 
+
+
+Cg_Zg_grouppairwise_rp <- pairwise.adonis2(Cg_Zg_BCdist_rp ~ group, data = Cg_Zg_metadata_rp, permutations = perm)
+#Cg_Zg_grouppairwise_rp
+
+# ordinate 
+Cg_Zg_ord_rp <- ordinate(physeq = Cgrowth_Zgrowth_rp, method="PCoA", distance= Cg_Zg_BCdist_rp)
+
+# save vectors
+Cg_Zg_rp_vectors <- as.data.frame(Cg_Zg_ord_rp$vectors)
+Cg_Zg_rp_vectors <- rownames_to_column(Cg_Zg_rp_vectors, "SampleID")
+
+# join to metadata
+Cg_Zg_rp_vectors_metadata <- dplyr::inner_join(Cg_Zg_rp_vectors, Cg_Zg_metadata_rp, by = "SampleID")
+
+# check plot_ordination() figure for axis % explained
+plot3 <- plot_ordination(Cgrowth_Zgrowth_rp, Cg_Zg_ord_rp, color ="group") + theme(aspect.ratio=1) 
+plot3
+
+# plot ordination
+Cg_Zg_PCoA_rp <- ggplot(Cg_Zg_rp_vectors_metadata, aes(x = Axis.1, y = Axis.2, color = group, shape = group, size=stage)) + geom_point(alpha=0.75) + theme(aspect.ratio=1) + scale_size_manual(name = "Growth stage", values = c(1, 2, 3, 4, 5, 6, 7), labels = c("V1", "V2","V3","V4","R1","R4", "R7")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control-growth", "Zeb-growth")) + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control-growth", "Zeb-growth")) + labs(title= "Rhizoplane - Growth") + xlab("Axis.1 [19.5%]") + ylab("Axis.2 [13.6%]") + my_theme + guides(shape = guide_legend(override.aes = list(size=4)))
+Cg_Zg_PCoA_rp 
+
+
+
+# control_time vs zeb_time
+perm <- how(nperm = 9999) 
+Ct_Zt_metadata_rp <- data.frame(sample_data(Ctime_Ztime_rp))
+Ct_Zt_BCdist_rp = vegdist(t(otu_table(Ctime_Ztime_rp)), method = "bray", binary = FALSE)
+
+set.seed(8)
+Ct_Zt_BC_adonis_rp <- adonis2(formula = Ct_Zt_BCdist_rp ~ group*stage, permutations = perm, data = Ct_Zt_metadata_rp)
+Ct_Zt_BC_adonis_rp
+#             Df SumOfSqs      R2      F Pr(>F)    
+# group        1   0.4435 0.03382 3.2968 0.0011 ** 
+# stage        6   3.7329 0.28468 4.6248 0.0001 ***
+# group:stage  6   1.8065 0.13777 2.2382 0.0001 ***
+# Residual    53   7.1297 0.54373                  
+# Total       66  13.1127 1.00000 
+
+Ct_Zt_pairwise_rp <- pairwise.adonis2(Ct_Zt_BCdist_rp ~ group_stage, data = Ct_Zt_metadata_rp, permutations = perm)
+#Ct_Zt_pairwise_rp
+# $Zeb_time_day21_vs_Control_time_day21
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.21636 0.17412 1.4758 0.0318 *
+# 
+# $Zeb_time_day3_vs_Control_time_day3
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.20158 0.15675 1.4871 0.0148 *
+# 
+# $Zeb_time_day63_vs_Control_time_day63
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.32498 0.21318 2.1675 0.0081 **
+#   
+# $Zeb_time_day7_vs_Control_time_day7
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.24231 0.17966 1.7521 0.0391 *
+#   
+# $Control_time_day14_vs_Zeb_time_day14
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.24532 0.24769 2.3047 0.0162 *
+#   
+# $Control_time_day35_vs_Zeb_time_day35
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.43207 0.35432 3.8413  0.015 *
+#   
+# $Control_time_day49_vs_Zeb_time_day49
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.57954 0.32921 3.9261 0.0085 **
+  
+
+
+# ordinate 
+Ct_Zt_ord_rp <- ordinate(physeq = Ctime_Ztime_rp, method="PCoA", distance= Ct_Zt_BCdist_rp)
+
+# save vectors
+Ct_Zt_rp_vectors <- as.data.frame(Ct_Zt_ord_rp$vectors)
+Ct_Zt_rp_vectors <- rownames_to_column(Ct_Zt_rp_vectors, "SampleID")
+
+# join to metadata
+Ct_Zt_rp_vectors_metadata <- dplyr::inner_join(Ct_Zt_rp_vectors, Ct_Zt_metadata_rp, by = "SampleID")
+
+# check plot_ordination() figure for axis % explained
+plot4 <- plot_ordination(Ctime_Ztime_rp, Ct_Zt_ord_rp, color ="group") + theme(aspect.ratio=1) 
+plot4
+
+# plot ordination
+Ct_Zt_PCoA_rp <- ggplot(Ct_Zt_rp_vectors_metadata, aes(x = Axis.1, y = Axis.2, color = group, shape = group, size=stage)) + geom_point(alpha=0.75) + theme(aspect.ratio=1) + scale_size_manual(name = "Timepoint", values = c(1, 2, 3, 4, 5, 6, 7), labels = c("day3", "day7","day14","day21","day35","day49", "day63")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control-time", "Zeb-time")) + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control-time", "Zeb-time")) + labs(title= "Rhizoplane - Time") + xlab("Axis.1 [23.1%]") + ylab("Axis.2 [13.0%]") + my_theme + guides(shape = guide_legend(override.aes = list(size=4)))
+Ct_Zt_PCoA_rp 
+
+
+rplane_ords <- (Cg_Zg_PCoA_rp | Ct_Zt_PCoA_rp) + plot_annotation(tag_levels = "A")
+
+#ggsave(plot=rplane_ords, filename = "rplane_ords.png", width=12, height=6, units = "in")
+
+
+all4_ords <- ((Cg_Zg_PCoA_rs | Ct_Zt_PCoA_rs) / (Cg_Zg_PCoA_rp | Ct_Zt_PCoA_rp)) + plot_annotation(tag_levels = "A")
+#ggsave(plot=all4_ords, filename = "all4_ords.png", width=12, height=10, units = "in")
+```
+# beta dispersion - rhizoplane
+Functions for plotting data from betadisper() with ggplot2 were written by Daniel Padfield (https://gist.github.com/padpadpadpad/4201dc530b18a8d36363d37286edfc7c)
+```{r betadisper}
+# functions for plotting with ggplot ####
+# getting distances from betadisper() object
+betadisper_distances <- function(model){
+  temp <- data.frame(group = model$group)
+  temp2 <- data.frame(distances = unlist(model$distances))
+  temp2$sample <- row.names(temp2)
+  temp <- cbind(temp, temp2)
+  temp <- dplyr::select(temp, group, sample, dplyr::everything())
+  row.names(temp) <- NULL
+  return(temp)
+}
+
+# getting eigenvalues out of betadisper() object
+betadisper_eigenvalue <- function(model){
+  temp <- data.frame(eig = unlist(model$eig))
+  temp$PCoA <- row.names(temp)
+  row.names(temp) <- NULL
+  return(temp)
+}
+
+# getting the eigenvectors out of a betadisper() object
+betadisper_eigenvector <- function(model){
+  temp <- data.frame(group = model$group)
+  temp2 <- data.frame(unlist(model$vectors))
+  temp2$sample <- row.names(temp2)
+  temp <- cbind(temp, temp2)
+  temp <- dplyr::select(temp, group, sample, dplyr::everything())
+  row.names(temp) <- NULL
+  return(temp)
+}
+
+# get centroids
+betadisper_centroids <- function(model){
+  temp <- data.frame(unlist(model$centroids))
+  temp$group <- row.names(temp)
+  temp <- dplyr::select(temp, group, dplyr::everything())
+  row.names(temp) <- NULL
+  return(temp)
+}
+
+# betadisper data
+get_betadisper_data <- function(model){
+  temp <- list(distances = betadisper_distances(model),
+               eigenvalue = betadisper_eigenvalue(model),
+               eigenvector = betadisper_eigenvector(model),
+               centroids = betadisper_centroids(model))
+  return(temp)
+}
+
+
+# dispersion on rhizoplane - growth ####
+# Cg_Zg_metadata_rp
+# Cg_Zg_BCdist_rp
+
+Cg_Zg_betadisper <- betadisper(Cg_Zg_BCdist_rp, group=as.factor(Cg_Zg_metadata_rp$group_stage), type = "median", bias.adjust=TRUE)
+Cg_Zg_betadisper
+
+# Cg_Zg_permute <- permutest(Cg_Zg_betadisper, pairwise=TRUE, permutations=9999)
+# Cg_Zg_permute
+
+# No significance between control and zeb at any sample point
+#           Df  Sum Sq   Mean Sq      F N.Perm Pr(>F)
+# Groups    13 0.11083 0.0085251 0.6468   9999 0.8072
+
+boxplot(Cg_Zg_betadisper)
+
+# get betadisper data #
+Cg_Zg_betadisper_BDdata <- get_betadisper_data(Cg_Zg_betadisper)
+
+Cg_Zg_betadisper_BDdata$eigenvalue <- mutate(Cg_Zg_betadisper_BDdata$eigenvalue, percent = eig/sum(eig))
+
+Cg_Zg_betadisper_BDdata$chull <- group_by(Cg_Zg_betadisper_BDdata$eigenvector, group) %>%
+  do(data.frame(PCoA1 = .$PCoA1[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])],
+                PCoA2 = .$PCoA2[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])])) %>%
+  data.frame()
+
+colnames(Cg_Zg_betadisper_BDdata$distances)[2] <- "SampleID"
+Cg_Zg_metadata_rp_BDdata <- left_join(Cg_Zg_metadata_rp, Cg_Zg_betadisper_BDdata$distances, by="SampleID")
+
+# Now the dataframes are ready to be customized in ggplot
+
+Cg_Zg_rp_disper_plot <- ggplot(Cg_Zg_metadata_rp_BDdata, aes(x=stage, y=distances, color = treatment)) +
+  geom_boxplot(aes(x=stage, y=distances)) +
+  geom_point(aes(shape=treatment), size=3, position = position_dodge(width = 0.75)) +
+  my_theme + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control", "Zeb")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control", "Zeb")) + scale_x_discrete(labels=sampling_order_growth, breaks=waiver()) + ylab('Distance to Spatial Median') + xlab("Growth Stage") + labs(title="Rhizoplane - Growth") + theme(legend.key = element_rect(fill = "white"), legend.position = "none")
+Cg_Zg_rp_disper_plot
+
+
+# dispersion on rhizoplane - time ####
+# Ct_Zt_metadata_rp
+# Ct_Zt_BCdist_rp
+
+Ct_Zt_betadisper <- betadisper(Ct_Zt_BCdist_rp, group=as.factor(Ct_Zt_metadata_rp$group_stage), type = "median", bias.adjust=TRUE)
+Ct_Zt_betadisper
+
+# Ct_Zt_permute <- permutest(Ct_Zt_betadisper, pairwise=TRUE, permutations=9999)
+# Ct_Zt_permute
+
+# No significance between control and zeb at any sample point
+#           Df  Sum Sq   Mean Sq      F N.Perm Pr(>F)
+# Groups    13 0.12020 0.0092462 0.8017   9999 0.6512
+
+boxplot(Ct_Zt_betadisper)
+
+# get betadisper data #
+Ct_Zt_betadisper_BDdata <- get_betadisper_data(Ct_Zt_betadisper)
+
+Ct_Zt_betadisper_BDdata$eigenvalue <- mutate(Ct_Zt_betadisper_BDdata$eigenvalue, percent = eig/sum(eig))
+
+Ct_Zt_betadisper_BDdata$chull <- group_by(Ct_Zt_betadisper_BDdata$eigenvector, group) %>%
+  do(data.frame(PCoA1 = .$PCoA1[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])],
+                PCoA2 = .$PCoA2[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])])) %>%
+  data.frame()
+
+colnames(Ct_Zt_betadisper_BDdata$distances)[2] <- "SampleID"
+Ct_Zt_metadata_rp_BDdata <- left_join(Ct_Zt_metadata_rp, Ct_Zt_betadisper_BDdata$distances, by="SampleID")
+
+# Now the dataframes are ready to be customized in ggplot
+
+Ct_Zt_rp_disper_plot <- ggplot(Ct_Zt_metadata_rp_BDdata, aes(x=stage, y=distances, color = treatment)) +
+  geom_boxplot(aes(x=stage, y=distances)) +
+  geom_point(aes(shape=treatment), size=3, position = position_dodge(width = 0.75)) +
+  my_theme + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control", "Zeb")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control", "Zeb")) + scale_x_discrete(labels=sampling_order_time, breaks=waiver()) + ylab('Distance to Spatial Median') + xlab("Timepoint") + labs(title="Rhizoplane - Time") + theme(legend.key = element_rect(fill = "white"), legend.position = "none") 
+Ct_Zt_rp_disper_plot
+
+
+
+
+
+```
+
+
+
+# procrustes - rhizoplane
+```{r}
+# Separate by group
+Ctime_rp <- rplane_ps %>% ps_filter(group == "Control_time")
+
+Cgrowth_rp <- rplane_ps %>% ps_filter(group == "Control_growth")
+
+Ztime_rp <- rplane_ps %>% ps_filter(group == "Zeb_time")
+
+Zgrowth_rp <- rplane_ps %>% ps_filter(group == "Zeb_growth")
+
+
+# need matching sample ids that convey the time point and replicates..... export metadata and try to make new ids?
+# write.csv(data.frame(sample_data(Ctime_rp)), "Ctime_rp.csv")
+# write.csv(data.frame(sample_data(Cgrowth_rp)), "Cgrowth_rp.csv")
+# write.csv(data.frame(sample_data(Ztime_rp)), "Ztime_rp.csv")
+# write.csv(data.frame(sample_data(Zgrowth_rp)), "Zgrowth_rp.csv")
+
+# change IDs in OTU table
+# write.csv(data.frame(otu_table(Ctime_rp)), "Ctime_rp_otu.csv")
+# write.csv(data.frame(otu_table(Cgrowth_rp)), "Cgrowth_rp_otu.csv")
+# write.csv(data.frame(otu_table(Ztime_rp)), "Ztime_rp_otu.csv")
+# write.csv(data.frame(otu_table(Zgrowth_rp)), "Zgrowth_rp_otu.csv")
+
+# growth
+# read in otu tables
+Cgrowth_rp_otu_proc <- read.csv("Cgrowth_rp_otu_proc.csv", header=TRUE, row.names = 1)
+Zgrowth_rp_otu_proc <- read.csv("Zgrowth_rp_otu_proc.csv", header=TRUE, row.names = 1)
+
+
+Cgrowth_rp_dist = vegdist(t(Cgrowth_rp_otu_proc), method = "bray")
+Zgrowth_rp_dist = vegdist(t(Zgrowth_rp_otu_proc), method = "bray")
+Cgrowth_rp_MDS <- monoMDS(Cgrowth_rp_dist,k=3, model="global", pc=TRUE)
+Zgrowth_rp_MDS <- monoMDS(Zgrowth_rp_dist,k=3, model="global", pc=TRUE)
+
+plot(Cgrowth_rp_MDS)
+plot(Zgrowth_rp_MDS)
+
+growth.proc <- procrustes(X=Cgrowth_rp_MDS, Y=Zgrowth_rp_MDS, scale=TRUE)
+summary(growth.proc)
+plot(growth.proc)
+
+set.seed(27)
+growth.protest <- protest(X=Cgrowth_rp_MDS, Y=Zgrowth_rp_MDS, scores = "sites", permutations = how(nperm = 999))
+growth.protest
+# Procrustes Sum of Squares (m12 squared):        0.8591 
+# Correlation in a symmetric Procrustes rotation: 0.3754 
+# Significance:  0.024 *
+plot(growth.protest)
+
+
+# time
+# read in otu tables
+Ctime_rp_otu_proc <- read.csv("Ctime_rp_otu_proc.csv", header=TRUE, row.names = 1)
+Ztime_rp_otu_proc <- read.csv("Ztime_rp_otu_proc.csv", header=TRUE, row.names = 1)
+
+
+Ctime_rp_dist = vegdist(t(Ctime_rp_otu_proc), method = "bray")
+Ztime_rp_dist = vegdist(t(Ztime_rp_otu_proc), method = "bray")
+Ctime_rp_MDS <- monoMDS(Ctime_rp_dist,k=3, model="global", pc=TRUE)
+Ztime_rp_MDS <- monoMDS(Ztime_rp_dist,k=3, model="global", pc=TRUE)
+
+plot(Ctime_rp_MDS)
+plot(Ztime_rp_MDS)
+
+time.proc <- procrustes(X=Ctime_rp_MDS, Y=Ztime_rp_MDS, scale=TRUE)
+summary(time.proc)
+plot(time.proc)
+
+set.seed(27)
+time.protest <- protest(X=Ctime_rp_MDS, Y=Ztime_rp_MDS, scores = "sites", permutations = how(nperm = 999))
+time.protest
+# Procrustes Sum of Squares (m12 squared):        0.9856 
+# Correlation in a symmetric Procrustes rotation:  0.12 
+# Significance:  0.989 
+plot(time.protest)
+
+```
+
+
+
+# rhizosphere beta diversity
+```{r beta_rs}
+perm <- how(nperm = 999) 
+metadata_rs <- data.frame(sample_data(rsphere_ps))
+
+BCdist_rs = vegdist(t(otu_table(rsphere_ps)), method = "bray", binary = FALSE)
+
+set.seed(8)
+BC_adonis_rs <- adonis2(formula = BCdist_rs ~ treatment*age_days*stage_all, permutations = perm, data = metadata_rs)
+
+BC_adonis_rs
+# adonis2(formula = BCdist_rs ~ treatment * age_days * stage_all, data = metadata_rs, permutations = perm)
+#                      Df SumOfSqs      R2      F Pr(>F)    
+# treatment             1   0.3086 0.01599 2.3790  0.001 ***
+# age_days              1   0.7503 0.03887 5.7848  0.001 ***
+# stage_all            16   2.8984 0.15015 1.3966  0.001 ***
+# treatment:age_days    1   0.2121 0.01099 1.6353  0.010 ** 
+# treatment:stage_all   8   1.1255 0.05830 1.0846  0.134    
+# Residual            108  14.0084 0.72570                  
+# Total               135  19.3032 1.00000    
+
+unique(sample_data(rplane_ps)$stage_all)
+
+g_s_pairwise_rs <- pairwise.adonis2(BCdist_rs ~ group_stage, data = metadata_rs, permutations = perm)
+#g_s_pairwise_rs
+
+
+sample_data(rsphere_ps)$timepoint <- as.factor(sample_data(rsphere_ps)$timepoint)
+
+# ordinate 
+full_ord_rs <- ordinate(physeq = rsphere_ps, method="PCoA", distance= BCdist_rs)
+
+# plot ordination
+full_PCoA_rs <- plot_ordination(rsphere_ps, full_ord_rs, color ="treatment", shape="series") + theme(aspect.ratio=1)
+full_PCoA_rs + geom_point(aes(size=timepoint))
+
+
+# Separate in comparisons that we are interested in
+Cgrowth_Zgrowth_rs <- rsphere_ps %>% ps_filter(group != "Control_time") %>% ps_filter(group != "Zeb_time")
+
+Ctime_Ztime_rs <- rsphere_ps %>% ps_filter(group != "Control_growth") %>% ps_filter(group != "Zeb_growth")
+
+control_groups_rs <- rsphere_ps %>% ps_filter(group != "Zeb_growth") %>% ps_filter(group != "Zeb_time")
+
+zeb_groups_rs <- rsphere_ps %>% ps_filter(group != "Control_growth") %>% ps_filter(group != "Control_time")
+
+
+# test comparisons
+
+# control vs control, should be the same
+perm <- how(nperm = 9999) 
+C_C_metadata_rs <- data.frame(sample_data(control_groups_rs))
+C_C_BCdist_rs = vegdist(t(otu_table(control_groups_rs)), method = "bray", binary = FALSE)
+
+set.seed(8)
+C_C_BC_adonis_rs <- adonis2(formula = C_C_BCdist_rs ~ group, permutations = perm, data = C_C_metadata_rs)
+C_C_BC_adonis_rs
+#          Df SumOfSqs      R2      F Pr(>F)  
+# group     1   0.1580 0.01909 1.2846 0.0697 .
+
+
+# zeb vs zeb, should be different?
+perm <- how(nperm = 999) 
+ZZ_metadata_rs <- data.frame(sample_data(zeb_groups_rs))
+ZZ_BCdist_rs = vegdist(t(otu_table(zeb_groups_rs)), method = "bray", binary = FALSE)
+
+set.seed(8)
+ZZ_BC_adonis_rs <- adonis2(formula = ZZ_BCdist_rs ~ group, permutations = perm, data = ZZ_metadata_rs)
+ZZ_BC_adonis_rs
+#          Df SumOfSqs      R2      F Pr(>F)  
+# group     1   0.1491 0.01917 1.2897  0.038 *
+
+
+# control_growth vs zeb_growth
+perm <- how(nperm = 9999) 
+Cg_Zg_metadata_rs <- data.frame(sample_data(Cgrowth_Zgrowth_rs))
+Cg_Zg_BCdist_rs = vegdist(t(otu_table(Cgrowth_Zgrowth_rs)), method = "bray", binary = FALSE)
+
+set.seed(8)
+Cg_Zg_BC_adonis_rs <- adonis2(formula = Cg_Zg_BCdist_rs ~ group*stage, permutations = perm, data = Cg_Zg_metadata_rs)
+Cg_Zg_BC_adonis_rs
+#             Df SumOfSqs      R2      F Pr(>F)    
+# group        1   0.2474 0.03035 2.2850  1e-04 ***
+# stage        6   1.1804 0.14481 1.8168  1e-04 ***
+# group:stage  6   0.9847 0.12080 1.5157  1e-04 ***
+
+Cg_Zg_pairwise_rs <- pairwise.adonis2(Cg_Zg_BCdist_rs ~ group_stage, data = Cg_Zg_metadata_rs, permutations = perm)
+#Cg_Zg_pairwise_rs
+# $Control_growth_R1_vs_Zeb_growth_R1
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.16426 0.17631 1.7124 0.0067 **
+# 
+# $Control_growth_V2_vs_Zeb_growth_V2
+#             Df SumOfSqs      R2      F Pr(>F)
+# group_stage  1  0.12958 0.13639 1.1055 0.2226
+# 
+# $Control_growth_V3_vs_Zeb_growth_V3
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.20019 0.18365 1.7998 0.0092 **
+#   
+# $Zeb_growth_R4_vs_Control_growth_R4
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.17196 0.15186 1.4324  0.018 *
+#   
+# $Zeb_growth_R7_vs_Control_growth_R7
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.26716 0.24428 2.5859 0.0084 **
+#   
+# $Zeb_growth_V1_vs_Control_growth_V1
+#             Df SumOfSqs      R2      F Pr(>F)
+# group_stage  1  0.13643 0.16989 1.2279 0.1115
+# 
+# $Control_growth_V4_vs_Zeb_growth_V4
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.16125 0.16639 1.5968 0.0077 **
+
+Cg_Zg_grouppairwise_rs <- pairwise.adonis2(Cg_Zg_BCdist_rs ~ group, data = Cg_Zg_metadata_rs, permutations = perm)
+#Cg_Zg_grouppairwise_rs
+
+# ordinate 
+Cg_Zg_ord_rs <- ordinate(physeq = Cgrowth_Zgrowth_rs, method="PCoA", distance= Cg_Zg_BCdist_rs)
+
+# save vectors
+Cg_Zg_rs_vectors <- as.data.frame(Cg_Zg_ord_rs$vectors)
+Cg_Zg_rs_vectors <- rownames_to_column(Cg_Zg_rs_vectors, "SampleID")
+
+# join to metadata
+Cg_Zg_rs_vectors_metadata <- dplyr::inner_join(Cg_Zg_rs_vectors, Cg_Zg_metadata_rs, by = "SampleID")
+
+# check plot_ordination() figure for axis % explained
+plot1 <- plot_ordination(Cgrowth_Zgrowth_rs, Cg_Zg_ord_rs, color ="group") + theme(aspect.ratio=1) 
+plot1
+
+# plot ordination
+Cg_Zg_PCoA_rs <- ggplot(Cg_Zg_rs_vectors_metadata, aes(x = Axis.1, y = Axis.2, color = group, shape = group, size=stage)) + geom_point(alpha=0.75) + theme(aspect.ratio=1) + scale_size_manual(name = "Growth stage", values = c(1, 2, 3, 4, 5, 6, 7), labels = c("V1", "V2","V3","V4","R1","R4", "R7")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control-growth", "Zeb-growth")) + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control-growth", "Zeb-growth")) + labs(title= "Rhizosphere - Growth") + xlab("Axis.1 [9.5%]") + ylab("Axis.2 [5.4%]") + my_theme + guides(shape = guide_legend(override.aes = list(size=4)))
+Cg_Zg_PCoA_rs
+
+
+
+# control_time vs zeb_time
+perm <- how(nperm = 9999) 
+Ct_Zt_metadata_rs <- data.frame(sample_data(Ctime_Ztime_rs))
+Ct_Zt_BCdist_rs = vegdist(t(otu_table(Ctime_Ztime_rs)), method = "bray", binary = FALSE)
+
+set.seed(8)
+Ct_Zt_BC_adonis_rs <- adonis2(formula = Ct_Zt_BCdist_rs ~ group*stage, permutations = perm, data = Ct_Zt_metadata_rs)
+Ct_Zt_BC_adonis_rs
+#             Df SumOfSqs      R2      F Pr(>F)    
+# group        1   0.1932 0.02404 1.7894  4e-04 ***
+# stage        6   1.0950 0.13619 1.6899  1e-04 ***
+# group:stage  6   0.8122 0.10102 1.2535  4e-04 ***
+
+Ct_Zt_pairwise_rs <- pairwise.adonis2(Ct_Zt_BCdist_rs ~ group_stage, data = Ct_Zt_metadata_rs, permutations = perm)
+#Ct_Zt_pairwise_rs
+# $Control_time_day14_vs_Zeb_time_day14
+#             Df SumOfSqs      R2      F Pr(>F)  
+# group_stage  1  0.12559 0.13481 1.2466 0.0298 *
+#   
+# $Control_time_day21_vs_Zeb_time_day21
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.15609 0.14827 1.3926 0.0069 **
+#   
+# $Control_time_day35_vs_Zeb_time_day35
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.16751 0.16108 1.5361 0.0083 **
+#   
+# $Control_time_day63_vs_Zeb_time_day63
+#             Df SumOfSqs      R2      F Pr(>F)   
+# group_stage  1  0.19904 0.16579 1.5899 0.0086 **
+#   
+# $Zeb_time_day3_vs_Control_time_day3
+#             Df SumOfSqs      R2      F Pr(>F)
+# group_stage  1  0.10228 0.11854 1.0758  0.324
+# 
+# $Zeb_time_day7_vs_Control_time_day7
+#             Df SumOfSqs      R2    F Pr(>F)
+# group_stage  1  0.08906 0.10415 0.93 0.7113
+# 
+# $Control_time_day49_vs_Zeb_time_day49
+#             Df SumOfSqs     R2      F Pr(>F)  
+# group_stage  1  0.16252 0.1627 1.3602 0.0423 *
+
+
+# ordinate 
+Ct_Zt_ord_rs <- ordinate(physeq = Ctime_Ztime_rs, method="PCoA", distance= Ct_Zt_BCdist_rs)
+
+# save vectors
+Ct_Zt_rs_vectors <- as.data.frame(Ct_Zt_ord_rs$vectors)
+Ct_Zt_rs_vectors <- rownames_to_column(Ct_Zt_rs_vectors, "SampleID")
+
+# join to metadata
+Ct_Zt_rs_vectors_metadata <- dplyr::inner_join(Ct_Zt_rs_vectors, Ct_Zt_metadata_rs, by = "SampleID")
+
+# check plot_ordination() figure for axis % explained
+plot2 <- plot_ordination(Ctime_Ztime_rs, Ct_Zt_ord_rs, color ="group") + theme(aspect.ratio=1) 
+plot2
+
+# plot ordination
+Ct_Zt_PCoA_rs <- ggplot(Ct_Zt_rs_vectors_metadata, aes(x = Axis.1, y = Axis.2, color = group, shape = group, size=stage)) + geom_point(alpha=0.75) + scale_size_manual(name = "Timepoint", values = c(1, 2, 3, 4, 5, 6, 7), labels = c("day3", "day7","day14","day21","day35","day49", "day63")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control-time", "Zeb-time")) + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control-time", "Zeb-time")) + labs(title= "Rhizosphere - Time") + xlab("Axis.1 [8.2%]") + ylab("Axis.2 [5.9%]") + my_theme + theme(aspect.ratio=1) + guides(shape = guide_legend(override.aes = list(size=4)))
+Ct_Zt_PCoA_rs
+
+
+rsphere_ords <- (Cg_Zg_PCoA_rs | Ct_Zt_PCoA_rs) + plot_annotation(tag_levels = "A")
+
+#ggsave(plot=rsphere_ords, filename = "rsphere_ords.png", width=12, height=6, units = "in")
+
+
+
+```
+
+Perform the PCoA ordination
+library(phyloseq)
+
+ord_bc_pcoa <- ordinate(physeq,method="PCoA", distance="bray")
+
+Save the PCoA vectors data from your ordinated object
+vectors <- as.data.frame(ord_bc_pcoa$vectors)
+
+Change the rownames into a column and name this column the name "SampleID"
+library(tibble)
+
+vectors <- rownames_to_column(vectors, "SampleID")
+
+Save the metadata slot in your phyloseq object as its own data object, making sure that the sample column has the same name used in step 3 to allow the joining in step 5 (this step assumes that your sample column is automatically a rowname. If not: rename your sample column to "SampleID").
+metadata <- rownames_to_column(data.frame(physeq@sam_data), "SampleID")
+
+Use the inner_join() function to merge the metadata information with the PCoA data, where they will be joined by the "SampleID" column
+library(dplyr)
+
+vectors_metadata <- dplyr::inner_join(vectors, metadata, by = "SampleID")
+
+Use this data object in ggplot to plot your data
+library(ggplot2)
+
+ggplot(vectors_metadata, aes(x = Axis.1, y = Axis.2, color = variable1, shape = variable2)) + geom_point()
+
+# beta dispersion - rhizosphere
+```{r betadisper_rs}
+# dispersion on rhizosphere - growth ####
+# Cg_Zg_metadata_rs
+# Cg_Zg_BCdist_rs
+
+Cg_Zg_rs_betadisper <- betadisper(Cg_Zg_BCdist_rs, group=as.factor(Cg_Zg_metadata_rs$group_stage), type = "median", bias.adjust=TRUE)
+Cg_Zg_rs_betadisper
+
+# Cg_Zg_rs_permute <- permutest(Cg_Zg_rs_betadisper, pairwise=TRUE, permutations=9999)
+# Cg_Zg_rs_permute
+
+# No significance between control and zeb at any sample point
+#           Df  Sum Sq   Mean Sq      F N.Perm Pr(>F)
+# Groups    13 0.02219 0.0017069 0.715   9999 0.7413
+
+boxplot(Cg_Zg_rs_betadisper)
+
+# get betadisper data #
+Cg_Zg_rs_betadisper_BDdata <- get_betadisper_data(Cg_Zg_rs_betadisper)
+
+Cg_Zg_rs_betadisper_BDdata$eigenvalue <- mutate(Cg_Zg_rs_betadisper_BDdata$eigenvalue, percent = eig/sum(eig))
+
+Cg_Zg_rs_betadisper_BDdata$chull <- group_by(Cg_Zg_rs_betadisper_BDdata$eigenvector, group) %>%
+  do(data.frame(PCoA1 = .$PCoA1[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])],
+                PCoA2 = .$PCoA2[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])])) %>%
+  data.frame()
+
+colnames(Cg_Zg_rs_betadisper_BDdata$distances)[2] <- "SampleID"
+Cg_Zg_metadata_rs_BDdata <- left_join(Cg_Zg_metadata_rs, Cg_Zg_rs_betadisper_BDdata$distances, by="SampleID")
+
+# Now the dataframes are ready to be customized in ggplot
+
+Cg_Zg_rs_disper_plot <- ggplot(Cg_Zg_metadata_rs_BDdata, aes(x=stage, y=distances, color = treatment)) +
+  geom_boxplot(aes(x=stage, y=distances)) +
+  geom_point(aes(shape=treatment), size=3, position = position_dodge(width = 0.75)) +
+  my_theme + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control", "Zeb")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control", "Zeb")) + scale_x_discrete(labels=sampling_order_growth, breaks=waiver()) + ylab('Distance to Spatial Median') + xlab("Growth Stage") + labs(title="Rhizosphere - Growth") + theme(legend.key = element_rect(fill = "white"), legend.position = "none")
+Cg_Zg_rs_disper_plot
+
+
+# dispersion on rhizoplane - time ####
+# Ct_Zt_metadata_rp
+# Ct_Zt_BCdist_rp
+
+Ct_Zt_rs_betadisper <- betadisper(Ct_Zt_BCdist_rs, group=as.factor(Ct_Zt_metadata_rs$group_stage), type = "median", bias.adjust=TRUE)
+Ct_Zt_rs_betadisper
+
+# Ct_Zt_rs_permute <- permutest(Ct_Zt_rs_betadisper, pairwise=TRUE, permutations=9999)
+# Ct_Zt_rs_permute
+
+# No significance between control and zeb at any sample point
+#           Df  Sum Sq   Mean Sq      F N.Perm Pr(>F)
+# Groups    13 0.036937 0.0028413 1.5995   9999 0.1071
+
+boxplot(Ct_Zt_rs_betadisper)
+
+# get betadisper data #
+Ct_Zt_rs_betadisper_BDdata <- get_betadisper_data(Ct_Zt_rs_betadisper)
+
+Ct_Zt_rs_betadisper_BDdata$eigenvalue <- mutate(Ct_Zt_rs_betadisper_BDdata$eigenvalue, percent = eig/sum(eig))
+
+Ct_Zt_rs_betadisper_BDdata$chull <- group_by(Ct_Zt_rs_betadisper_BDdata$eigenvector, group) %>%
+  do(data.frame(PCoA1 = .$PCoA1[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])],
+                PCoA2 = .$PCoA2[c(chull(.$PCoA1, .$PCoA2), chull(.$PCoA1, .$PCoA2)[1])])) %>%
+  data.frame()
+
+colnames(Ct_Zt_rs_betadisper_BDdata$distances)[2] <- "SampleID"
+Ct_Zt_metadata_rs_BDdata <- left_join(Ct_Zt_metadata_rs, Ct_Zt_rs_betadisper_BDdata$distances, by="SampleID")
+
+# Now the dataframes are ready to be customized in ggplot
+
+Ct_Zt_rs_disper_plot <- ggplot(Ct_Zt_metadata_rs_BDdata, aes(x=stage, y=distances, color = treatment)) +
+  geom_boxplot(aes(x=stage, y=distances)) +
+  geom_point(aes(shape=treatment), size=3, position = position_dodge(width = 0.75)) +
+  my_theme + scale_color_manual(name = "Treatment\nGroup", values = c("#F8766D", "#00bfc4"), labels = c("Control", "Zeb")) + scale_shape_manual(name = "Treatment\nGroup", values = c(16, 17), labels = c("Control", "Zeb")) + scale_x_discrete(labels=sampling_order_time, breaks=waiver()) + ylab('Distance to Spatial Median') + xlab("Timepoint") + labs(title="Rhizosphere - Time") + theme(legend.key = element_rect(fill = "white")) 
+Ct_Zt_rs_disper_plot
+
+
+# combine with patchwork
+dispersion_plots <- (Cg_Zg_rs_disper_plot | Ct_Zt_rs_disper_plot) / (Cg_Zg_rp_disper_plot | Ct_Zt_rp_disper_plot) + plot_annotation(tag_levels = "A")
+dispersion_plots
+
+#ggsave(filename="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/dispersion_plots.png", plot=dispersion_plots, width=11, height=9, units="in")
+```
+
+
+# procrustes - rhizosphere
+```{r}
+# Separate by group
+Ctime_rs <- rsphere_ps %>% ps_filter(group == "Control_time")
+
+Cgrowth_rs <- rsphere_ps %>% ps_filter(group == "Control_growth")
+
+Ztime_rs <- rsphere_ps %>% ps_filter(group == "Zeb_time")
+
+Zgrowth_rs <- rsphere_ps %>% ps_filter(group == "Zeb_growth")
+
+
+# need matching sample ids that convey the time point and replicates..... export metadata and try to make new ids?
+# write.csv(data.frame(sample_data(Ctime_rs)), "Ctime_rs.csv")
+# write.csv(data.frame(sample_data(Cgrowth_rs)), "Cgrowth_rs.csv")
+# write.csv(data.frame(sample_data(Ztime_rs)), "Ztime_rs.csv")
+# write.csv(data.frame(sample_data(Zgrowth_rs)), "Zgrowth_rs.csv")
+# 
+# # change IDs in OTU table
+# write.csv(data.frame(otu_table(Ctime_rs)), "Ctime_rs_otu.csv")
+# write.csv(data.frame(otu_table(Cgrowth_rs)), "Cgrowth_rs_otu.csv")
+# write.csv(data.frame(otu_table(Ztime_rs)), "Ztime_rs_otu.csv")
+# write.csv(data.frame(otu_table(Zgrowth_rs)), "Zgrowth_rs_otu.csv")
+
+# growth
+# read in otu tables
+Cgrowth_rs_otu_proc <- read.csv("Cgrowth_rs_otu_proc.csv", header=TRUE, row.names = 1)
+Zgrowth_rs_otu_proc <- read.csv("Zgrowth_rs_otu_proc.csv", header=TRUE, row.names = 1)
+
+
+Cgrowth_rs_dist = vegdist(t(Cgrowth_rs_otu_proc), method = "bray")
+Zgrowth_rs_dist = vegdist(t(Zgrowth_rs_otu_proc), method = "bray")
+Cgrowth_rs_MDS <- monoMDS(Cgrowth_rs_dist,k=3, model="global", pc=TRUE)
+Zgrowth_rs_MDS <- monoMDS(Zgrowth_rs_dist,k=3, model="global", pc=TRUE)
+
+plot(Cgrowth_rs_MDS)
+plot(Zgrowth_rs_MDS)
+
+growth.proc.rs <- procrustes(X=Cgrowth_rs_MDS, Y=Zgrowth_rs_MDS, scale=TRUE)
+summary(growth.proc.rs)
+plot(growth.proc.rs)
+
+set.seed(27)
+growth.protest.rs <- protest(X=Cgrowth_rs_MDS, Y=Zgrowth_rs_MDS, scores = "sites", permutations = how(nperm = 999))
+growth.protest.rs
+# Procrustes Sum of Squares (m12 squared):        0.9257 
+# Correlation in a symmetric Procrustes rotation: 0.2726 
+# Significance:  0.332 
+plot(growth.protest.rs)
+
+
+# time
+# read in otu tables
+Ctime_rs_otu_proc <- read.csv("Ctime_rs_otu_proc.csv", header=TRUE, row.names = 1)
+Ztime_rs_otu_proc <- read.csv("Ztime_rs_otu_proc.csv", header=TRUE, row.names = 1)
+
+
+Ctime_rs_dist = vegdist(t(Ctime_rs_otu_proc), method = "bray")
+Ztime_rs_dist = vegdist(t(Ztime_rs_otu_proc), method = "bray")
+Ctime_rs_MDS <- monoMDS(Ctime_rs_dist,k=3, model="global", pc=TRUE)
+Ztime_rs_MDS <- monoMDS(Ztime_rs_dist,k=3, model="global", pc=TRUE)
+
+plot(Ctime_rs_MDS)
+plot(Ztime_rs_MDS)
+
+time.proc.rs <- procrustes(X=Ctime_rs_MDS, Y=Ztime_rs_MDS, scale=TRUE)
+summary(time.proc.rs)
+plot(time.proc.rs)
+
+set.seed(27)
+time.protest.rs <- protest(X=Ctime_rs_MDS, Y=Ztime_rs_MDS, scores = "sites", permutations = how(nperm = 999))
+time.protest.rs
+# Procrustes Sum of Squares (m12 squared):        0.9418 
+# Correlation in a symmetric Procrustes rotation: 0.2412 
+# Significance:  0.498  
+plot(time.protest.rs)
+
+```
+
+# trajectory analysis
+```{r ecotraj}
+# EXAMPLE FROM SAM ####
+# Metadata for both samples
+SiteID_1.meta = data.frame(sample_data(rare.physeq)) %>%
+  group_by(SiteID, FireClassification) %>%
+  summarize(mean_pH_1 = mean(pH),
+            sd_pH_1 = sd(pH),
+            n_year_1 = n(),
+            max_temp_1 = max(CoreTemp_C),
+            min_temp_1 = min(CoreTemp_C)) %>%
+  ungroup %>%
+  rename(SiteID_1 = SiteID,
+         FireClassification_1 = FireClassification)
+
+# data for analysis
+D = as.matrix(wUF.dist)
+All.samples.meta = data.frame(sample_data(rare.physeq)) %>%
+  arrange(SiteID, Year) %>%
+  group_by(survey = Year-2014)
+D = D[All.samples.meta$SampleID, All.samples.meta$SampleID] %>%
+  as.dist()
+sites = All.samples.meta$SiteID
+surveys = All.samples.meta$survey
+
+# Trajectory directionality
+traj.direct.df = data.frame(directionality = trajectoryDirectionality(D, sites, surveys)) %>%
+  tibble::rownames_to_column(var="SiteID_1") %>%
+  left_join(SiteID_1.meta, by = "SiteID_1") %>%
+  mutate(delta_temp = max_temp_1-min_temp_1)
+
+# First look at directionaitiy across fire classifications
+traj.direct.dunn = dunn.test::dunn.test(traj.direct.df$directionality, traj.direct.df$FireClassification_1, method="bh")
+
+# Next look at directionality over maximum disturbance intensity
+traj_max_temp.model = lm(directionality~max_temp_1, data=traj.direct.df)
+summary(traj_max_temp.model)
+
+# Now plot these results
+# Across fire class
+traj.direct.plot = ggplot(data=traj.direct.df, aes(x=FireClassification_1, y=directionality)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height=0, width=0.25, size=2, aes(shape=FireClassification_1, fill=SiteID_1)) +
+  annotate("segment", x=c(1, 1), xend=c(2, 3), y=c(0.49, 0.51), yend=c(0.49, 0.51)) +
+  annotate("segment", x=c(1, 1, 2, 3), xend=c(1, 1, 2, 3), y=c(0.485, 0.505, 0.485, 0.505), yend=c(0.49, 0.51, 0.49, 0.51)) +
+  annotate("text", x=c(1.5, 2), y=c(0.5, 0.52), size=6*5/14,
+           label=c(paste("p=", round(traj.direct.dunn$P.adjusted[1], digits = 3), sep=""), 
+                   paste("p=", round(traj.direct.dunn$P.adjusted[2], digits = 3), sep=""))) +
+  scale_shape_manual(values=c("FireAffected" = 24, "Recovered" = 21, "Reference" = 22)) +
+  scale_fill_manual(values=site.col) +
+  lims(y=c(0.30, 0.52)) +
+  labs(x = "Fire Classification", y = "Whole community\ntrajectory directionality") +
+  basic_theme +
+  theme(legend.position = "none")
+
+# Across disturbance intensity
+traj_max_temp.plot = ggplot(data=traj.direct.df, aes(x=max_temp_1, y=directionality)) +
+  geom_point(aes(shape=FireClassification_1, fill=SiteID_1), size=2) +
+  geom_abline(intercept = summary(traj_max_temp.model)$coefficients[[1]], 
+              slope = summary(traj_max_temp.model)$coefficients[[2]], 
+              linetype = 1, size=2, color="black") +
+  geom_abline(intercept = summary(traj_max_temp.model)$coefficients[[1]], 
+              slope = summary(traj_max_temp.model)$coefficients[[2]], 
+              linetype = 1, size=1, color="white") +
+  scale_shape_manual(values=c("FireAffected" = 24, "Recovered" = 21, "Reference" = 22)) +
+  scale_fill_manual(values=site.col) +
+  lims(y=c(0.30, 0.52)) +
+  labs(x="Maximum soil temperature (˚C)", y="Whole community\ntrajectory directionality") +
+  basic_theme +
+  theme(legend.position = "none")
+
+trajectory_full.plot = cowplot::plot_grid(traj.direct.plot, traj_max_temp.plot, 
+                                          ncol=1, labels = c("A", "C"), label_size = 8)
+trajectory_full.plot
+
+
+# rhizoplane - time ####
+# Ct_Zt_metadata_rp
+# Ct_Zt_BCdist_rp
+# data for analysis
+Ct_Zt_rp_D = as.matrix(Ct_Zt_BCdist_rp)
+df.Ct_Zt_rp_D = data.frame(Ct_Zt_rp_D)
+
+ID_order <- c(rownames(df.Ct_Zt_rp_D))
+
+Ct_Zt_rp_All.samples.meta = Ct_Zt_metadata_rp %>%
+  arrange(treatment, timepoint) %>%
+  group_by(survey = timepoint)
+
+Ct_Zt_rp_All.samples.meta <- Ct_Zt_rp_All.samples.meta[match(ID_order, Ct_Zt_rp_All.samples.meta$SampleID),]
+
+Ct_Zt_rp_D = Ct_Zt_rp_D[Ct_Zt_rp_All.samples.meta$SampleID, Ct_Zt_rp_All.samples.meta$SampleID] %>%
+  as.dist()
+Ct_Zt_rp_sites = Ct_Zt_rp_All.samples.meta$treatment
+Ct_Zt_rp_surveys = Ct_Zt_rp_All.samples.meta$survey
+
+Ct_Zt_rp_traj.direct.df = data.frame(directionality = trajectoryDirectionality(d=Ct_Zt_rp_D, sites=Ct_Zt_rp_sites, surveys=Ct_Zt_rp_surveys)) %>%
+  tibble::rownames_to_column(var="treatment") %>%
+  left_join(Ct_Zt_metadata_rp, by = "treatment") 
+
+#Ct_Zt_rp_traj.direct.dunn = dunn_test(Ct_Zt_rp_traj.direct.df, directionality~treatment, p.adjust.method="BH")
+
+#Ct_Zt_rp_traj.model = lm(directionality~stage, data=Ct_Zt_rp_traj.direct.df)
+#summary(Ct_Zt_rp_traj.model)
+
+Ct_Zt_traj.direct.plot = ggplot(data=Ct_Zt_rp_traj.direct.df, aes(x=treatment, y=directionality)) +
+  geom_point(size=2, aes(color=treatment)) + lims(y=c(0.3, 0.4))#+
+  # annotate("segment", x=c(1, 1), xend=c(2, 3), y=c(0.49, 0.51), yend=c(0.49, 0.51)) +
+  # annotate("segment", x=c(1, 1, 2, 3), xend=c(1, 1, 2, 3), y=c(0.485, 0.505, 0.485, 0.505), yend=c(0.49, 0.51, 0.49, 0.51)) +
+  # annotate("text", x=c(1.5, 2), y=c(0.5, 0.52), size=6*5/14,
+  #          label=c(paste("p=", round(traj.direct.dunn$P.adjusted[1], digits = 3), sep=""), 
+  #                  paste("p=", round(traj.direct.dunn$P.adjusted[2], digits = 3), sep=""))) +
+  # scale_shape_manual(values=c("FireAffected" = 24, "Recovered" = 21, "Reference" = 22)) +
+  # scale_fill_manual(values=site.col) +
+  #  +
+  # labs(x = "Fire Classification", y = "Whole community\ntrajectory directionality") +
+  # basic_theme +
+  # theme(legend.position = "none")
+
+oldpar<-par(mar=c(4,4,1,1))
+trajectoryPlot(Ct_Zt_rp_D, Ct_Zt_rp_sites, Ct_Zt_rp_surveys, traj.colors = c("black","red"), lwd = 2,
+               survey.labels = T)
+#legend("topright", col=c("black","red"), 
+#       legend=c("Trajectory 1", "Trajectory 2"), bty="n", lty=1, lwd = 2)
+
+
+
+# rhizoplane - growth ####
+
+# Cg_Zg_metadata_rp
+# Cg_Zg_BCdist_rp
+# data for analysis
+Cg_Zg_rp_D = as.matrix(Cg_Zg_BCdist_rp)
+df.Cg_Zg_rp_D = data.frame(Cg_Zg_rp_D)
+ID_order_g <- c(rownames(df.Cg_Zg_rp_D))
+
+Cg_Zg_rp_All.samples.meta = Cg_Zg_metadata_rp %>%
+  arrange(treatment, timepoint) %>%
+  group_by(survey = timepoint)
+
+Cg_Zg_rp_All.samples.meta <- Cg_Zg_rp_All.samples.meta[match(ID_order_g, Cg_Zg_rp_All.samples.meta$SampleID),]
+
+Cg_Zg_rp_D = Cg_Zg_rp_D[Cg_Zg_rp_All.samples.meta$SampleID, Cg_Zg_rp_All.samples.meta$SampleID] %>%
+  as.dist()
+Cg_Zg_rp_sites = Cg_Zg_rp_All.samples.meta$treatment
+Cg_Zg_rp_surveys = Cg_Zg_rp_All.samples.meta$survey
+
+Cg_Zg_rp_traj.direct.df = data.frame(directionality = trajectoryDirectionality(d=Cg_Zg_rp_D, sites=Cg_Zg_rp_sites, surveys=Cg_Zg_rp_surveys)) %>%
+  tibble::rownames_to_column(var="treatment") %>%
+  left_join(Cg_Zg_metadata_rp, by = "treatment") 
+
+Cg_Zg_traj.direct.plot = ggplot(data=Cg_Zg_rp_traj.direct.df, aes(x=treatment, y=directionality)) +
+  geom_point(size=2, aes(color=treatment)) + lims(y=c(0.3, 0.4))
+
+trajectoryPlot(Cg_Zg_rp_D, Cg_Zg_rp_sites, Cg_Zg_rp_surveys, traj.colors = c("black","red"), lwd = 2,
+               survey.labels = T)
+```
+
+
+# heatmap
+```{r heatmap_rhizoplane}
+rplane_ps
+
+rplane_otu_table <- otu_table(rplane_ps)
+abundance <- data.frame(taxa_sums(rplane_otu_table))
+
+rplane_otu_table <- data.frame(rplane_otu_table)
+rplane_otu_table$asvID <- rownames(rplane_otu_table)
+abundance$asvID <- rownames(abundance)
+
+rplane_otu_table_w_abund <- left_join(abundance, rplane_otu_table, by="asvID")
+
+rplane_otu_table_high <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 5000) %>% arrange(desc(taxa_sums.rplane_otu_table.))
+
+keep_taxa_list <- as.vector(rplane_otu_table_high$asvID)
+
+rplane_ps_high_abund <- prune_taxa(keep_taxa_list, rplane_ps)
+
+rplane_high_meta <- data.frame(sample_data(rplane_ps_high_abund))
+
+rplane_high_otu <- data.frame(otu_table(rplane_ps_high_abund))
+
+#rel_abund_test <- data.frame(scale(rplane_high_otu, center=F, scale=colSums(rplane_high_otu)))
+
+rplane_high_tax <- data.frame(tax_table(rplane_ps_high_abund))
+
+family_list <- unique(c(rplane_high_tax$Family)) 
+#34 families
+number_list <- c(1:34)
+
+family_numbers <- data.frame(family_list, number_list) 
+colnames(family_numbers)[1] <- "Family"
+new_table <- left_join(rplane_high_tax, family_numbers, by="Family")
+number_table_list <- new_table$number_list
+rplane_high_tax$number_list <- number_table_list
+
+family_list[22] <- "Unidentified"
+
+# need 34 colors
+colors_a <- paletteer_d("ggthemes::Classic_20")
+colors_b <- paletteer_d("tvthemes::kimPossible") #12
+colors_b_6 <- colors_b[7:12]
+colors_b_pick <- c(colors_b[2], colors_b[4], colors_b[6:7], colors_b[9:12])
+colors_c <- paletteer_dynamic("cartography::multi.pal", 20)
+colors_c_pick <- c(colors_c[1], colors_c[3], colors_c[5], colors_c[8:10])
+
+colors_34 <- c(colors_a, colors_b_pick, colors_c_pick)
+
+
+# ComplexHeatmap
+# sampling point colors chosen from  paletteer_d("colorBlindness::paletteMartin")
+
+annotate <- HeatmapAnnotation(Treatment = rplane_high_meta$treatment, Sampling_point = rplane_high_meta$stage, col = list(Treatment = c("Control" = "#F8766D", "Zeb" = "#00bfc4"), Sampling_point = c("day3" = '#920000FF',  'day7' = '#924900FF', 'day14' ='#DB6D00FF', 'day21' = '#FFFF6DFF', 'day35' = '#24FF24FF', 'day49' = '#009292FF', 'day63' = '#004949FF', 'V1' ='#FFA8D4','V2'= '#CE498B', 'V3'= '#B6DBFFFF', 'V4'= '#6DB6FFFF', 'R1'= '#006DDBFF', 'R4'= '#B66DFFFF', 'R7'= '#490092FF')),  annotation_legend_param = list(
+    Treatment = list(
+                title = "Treatment",
+                at = c("Control", "Zeb"),
+                labels = c("Control", "Zeb")
+            ),
+        Sampling_point = list(
+                title = "Sampling Point",
+                at = c("day3", 'day7', 'day14', 'day21', 'day35', 'day49', 'day63', 'V1', 'V2', 'V3', 'V4', 'R1', 'R4', 'R7'),
+                labels = c("Day3", 'Day7', 'Day14', 'Day21', 'Day35', 'Day49', 'Day63', 'V1', 'V2', 'V3', 'V4', 'R1', 'R4', 'R7')
+            )
+))
+
+
+annotate_family <- rowAnnotation(ASV_Family = rplane_high_tax$number_list, col = list(ASV_Family = c('1' = colors_34[1], '2' = colors_34[2], '3' = colors_34[3], '4' = colors_34[4], '5' = colors_34[5], '6' = colors_34[6], '7' = colors_34[7], '8' = colors_34[8], '9' = colors_34[9], '10' = colors_34[10], '11' = colors_34[11], '12' = colors_34[12], '13' = colors_34[13], '14' = colors_34[14], '15' = colors_34[15], '16' = colors_34[16], '17' = colors_34[17], '18' = colors_34[18], '19' = colors_34[19], '20' = colors_34[20], '21' = colors_34[21], '22' = colors_34[22], '23' = colors_34[23], '24' = colors_34[24], '25' = colors_34[25], '26' = colors_34[26], '27' = colors_34[27], '28' = colors_34[28], '29' = colors_34[29], '30' = colors_34[30], '31' = colors_34[31], '32' = colors_34[32], '33' = colors_34[33], '34' = colors_34[34])),                                  annotation_legend_param = list(ASV_Family = list(
+                title = "ASV Family",
+                at = number_list,
+                labels = family_list)))
+
+series_names = c("growth" = "Growth Stage", "time" = "Time Series")
+
+rhizoplane_hm <- Heatmap(rplane_high_otu, name="ASV reads\nper sample", show_row_names = FALSE, column_split=rplane_high_meta$series, top_annotation = annotate, row_title = "ASV", right_annotation = annotate_family, column_title = series_names, use_raster = TRUE, 
+        raster_device = "png")
+draw(rhizoplane_hm, heatmap_legend_side = "right")
+
+pdf(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/heatmap.pdf", width = 15, height = 9)
+rhizoplane_hm <- Heatmap(rplane_high_otu, name="ASV reads\nper sample", show_row_names = FALSE, column_split=rplane_high_meta$series, top_annotation = annotate, row_title = "ASV", right_annotation = annotate_family, column_title = series_names, column_names_gp = gpar(fontsize = 6))
+draw(rhizoplane_hm)
+dev.off()
+```
+
+
+# idicator taxa and rank abundance with neutral model
+I think i should do the neutral model longitudinally over time like in the Burns study. How is selection changing over the plant life cycle? Are indicators above the neutral model for their specific growth stage? Are the selected species different at each time point? Would expect things above the model to be reacting to the plant selection
+
+hypothesis - indicator taxa associated with control and zeb treatments at each time point should be neutral while taxa associated with plant growth stage would be above the neutral model. Indicator taxa associated with time should be neutral while growth stage should be adove.
+```{r}
+library(reltools)
+# use fit_sncm() from reltools, authored by Adam R Burns et al. 2016 https://doi.org/10.1038/ismej.2015.142
+
+# indicator species ####
+rplane_ASV_table_filter <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 100) %>% arrange(desc(taxa_sums.rplane_otu_table.))
+
+keep_taxa_100 <- as.vector(rplane_ASV_table_filter$asvID)
+
+rplane_ps_100 <- prune_taxa(keep_taxa_100, rplane_ps)
+
+
+rplane_ASV_table <- t(otu_table(rplane_ps_100))
+rplane_ASV_table <- data.frame(rplane_ASV_table)
+
+rplane_metadata <- data.frame(sample_data(rplane_ps))
+
+rplane_treatment <- c(rplane_metadata$treatment)
+rplane_series <- c(rplane_metadata$series)
+rplane_stage <- c(rplane_metadata$stage)
+rplane_group_stage <- c(rplane_metadata$group_stage)
+rplane_group <- c(rplane_metadata$group)
+
+indic_rplane_treatment <- multipatt(rplane_ASV_table, rplane_treatment, duleg=TRUE, control=how(nperm=9999))
+summary(indic_rplane_treatment)
+sink(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rhizoplane_indicators_treatment.csv")
+summary(indic_rplane_treatment)
+sink()
+
+treatment_indicators <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rhizoplane_indicators_treatment_edit.csv")
+treatment_indicators <- treatment_indicators %>% mutate(asvID = gsub("^X", "", asvID))
+
+indic_rplane_group <- multipatt(rplane_ASV_table, rplane_group, duleg=TRUE, control=how(nperm=9999))
+summary(indic_rplane_group)
+
+indic_rplane_series <- multipatt(rplane_ASV_table, rplane_series, duleg=TRUE, control=how(nperm=999))
+summary(indic_rplane_series)
+
+indic_rplane_stage <- multipatt(rplane_ASV_table, rplane_stage, duleg=TRUE, control=how(nperm=999))
+summary(indic_rplane_stage)
+sink(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rhizoplane_indicators_stage.csv")
+summary(indic_rplane_stage)
+sink()
+
+stage_indicator_ASVs <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rhizoplane_indicators_stage_edit.csv")
+
+stage_indicator_ASVs$asvID <- as.character(stage_indicator_ASVs$asvID)
+stage_indicator_ASVs <- stage_indicator_ASVs %>% mutate(asvID = gsub("^X", "", asvID))
+
+# add log relative adundance, indic, occupancy to ASV table
+count_rplane_100 <- otu_table(rplane_ps_100)
+count_rplane_100[count_rplane_100 > 0] <- 1
+df_rplane_100 <- as.data.frame(count_rplane_100)
+rel.abu_rplane_100 <- data.frame(taxa_sums(rplane_ps_100))
+rel.abu_rplane_100$log <- log10(rel.abu_rplane_100$taxa_sums.rplane_ps_100)
+df_rplane_100$occupancy <- rowSums(df_rplane_100)/ncol(df_rplane_100)
+df_rplane_100$asvID <- rownames(df_rplane_100)
+
+
+
+rel.abu_rplane_100$asvID <- rownames(rel.abu_rplane_100)
+rplane_ASV_table_new <- merge.data.frame(rel.abu_rplane_100, stage_indicator_ASVs, by="asvID", all.x = T)
+
+rplane_ASV_table_new <- rplane_ASV_table_new %>% mutate(indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+rplane_ASV_table_all <- merge.data.frame(rplane_ASV_table_new, df_rplane_100, by="asvID", all.x = T)
+
+asv_rel <- apply(decostand(count_rplane_100, method="total", MARGIN=2),1, mean)     # mean relative abundance
+asv_rel <- data.frame(asv_rel)
+asv_rel$log_mean <- log10(asv_rel$asv_rel)
+asv_rel$asvID <- rownames(asv_rel)
+colnames(asv_rel)[1] <- "rel_abund"
+
+rplane_ASV_table_all <- merge.data.frame(rplane_ASV_table_all, asv_rel, by="asvID", all.x = T)
+
+rank_abund_plot <- ggplot(rplane_ASV_table_all, aes(x=log, y=occupancy, color=indic_stage)) + geom_point()
+rank_abund_plot
+
+rank_abund_plot2 <- ggplot(rplane_ASV_table_all, aes(x=log_mean, y=occupancy, color=indic_stage)) + geom_point()
+rank_abund_plot2
+
+# occupancy abundance ####
+
+
+# use more of the dataset
+rplane_ASV_table_filter <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 10) %>% arrange(desc(taxa_sums.rplane_otu_table.))
+# 4,303 taxa
+keep_taxa_10 <- as.vector(rplane_ASV_table_filter$asvID)
+
+rplane_ps_10 <- prune_taxa(keep_taxa_10, rplane_ps)
+asv_rplane_10 <- otu_table(rplane_ps_10)
+asv_rel10 <- apply(decostand(asv_rplane_10, method="total", MARGIN=2),1, mean)
+asv_rel10 <- data.frame(asv_rel10)
+asv_rel10$log_mean <- log10(asv_rel10$asv_rel10)
+asv_rel10$asvID <- rownames(asv_rel10)
+colnames(asv_rel10)[1] <- "rel_abund"
+
+asv_rplane_10[asv_rplane_10 > 0] <- 1
+asv_rel10$occupancy <- rowSums(asv_rplane_10)/ncol(asv_rplane_10)
+asv_rel10
+stage_indicator_ASVs
+asv_rel10_indic <- merge.data.frame(asv_rel10, stage_indicator_ASVs, by="asvID", all.x = T)
+asv_rel10_indic <- asv_rel10_indic %>% mutate(indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+rank_abund_plot3 <- ggplot(asv_rel10_indic, aes(x=log_mean, y=occupancy, color=indic_stage)) + geom_point()
+rank_abund_plot3
+
+# even more?
+rplane_ASV_table_filter <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 4) %>% arrange(desc(taxa_sums.rplane_otu_table.))
+# 9,569 taxa
+keep_taxa_4 <- as.vector(rplane_ASV_table_filter$asvID)
+rplane_ps_4 <- prune_taxa(keep_taxa_4, rplane_ps)
+
+asv_rplane_4 <- otu_table(rplane_ps_4)
+asv_rel_4 <- apply(decostand(asv_rplane_4, method="total", MARGIN=2),1, mean)
+asv_rel_4 <- data.frame(asv_rel_4)
+asv_rel_4$log_mean <- log10(asv_rel_4$asv_rel_4)
+asv_rel_4$asvID <- rownames(asv_rel_4)
+colnames(asv_rel_4)[1] <- "mean_rel_abund"
+
+asv_rplane_4[asv_rplane_4 > 0] <- 1
+asv_rel_4$occupancy <- rowSums(asv_rplane_4)/ncol(asv_rplane_4)
+# asv_rel_4
+# stage_indicator_ASVs
+asv_rel_4_indic <- merge.data.frame(asv_rel_4, stage_indicator_ASVs, by="asvID", all.x = T)
+asv_rel_4_indic <- asv_rel_4_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+asv_rel_4_indic <- merge.data.frame(asv_rel_4_indic, treatment_indicators, by="asvID", all.x = T)
+asv_rel_4_indic <- asv_rel_4_indic %>% mutate(trt_indicator = if_else(is.na(Treatment), FALSE, TRUE))
+
+rank_abund_plot4 <- ggplot(asv_rel_4_indic, aes(x=log_mean, y=occupancy, color=indic_stage)) + geom_point()
+rank_abund_plot4
+
+
+# neutral model ####
+spp=t(otu_table(rplane_ps_4))
+spp <- data.frame(spp)
+colnames(spp) <- gsub("^X", "", colnames(spp))
+taxon=data.frame(tax_table(rplane_ps_4))
+
+#Models for the whole community
+
+
+rplane_4_nm = fit_sncm(spp, pool=NULL, taxon)
+rplane_4_nm <- as.data.frame(rplane_4_nm)
+arrange(rplane_4_nm, desc(predictions.freq))
+
+above.pred = sum(rplane_4_nm$predictions.freq > (rplane_4_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_4_nm)  # fraction of OTUs above prediction 
+below.pred = sum(rplane_4_nm$predictions.freq < (rplane_4_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_4_nm)  # fraction of OTUs below prediction
+
+100 - (above.pred*100) - (below.pred*100)
+
+trt_occ_abund_plot <- ggplot() +
+  geom_point(data=asv_rel_4_indic[asv_rel_4_indic$trt_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=asv_rel_4_indic[asv_rel_4_indic$trt_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=Treatment), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_4_nm, size=1, aes(y=rplane_4_nm$predictions.freq.pred, x=log10(rplane_4_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_4_nm, aes(y=rplane_4_nm$predictions.pred.upr, x=log10(rplane_4_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_4_nm, aes(y=rplane_4_nm$predictions.pred.lwr, x=log10(rplane_4_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Treatment\nIndicator Taxa", values=colors, breaks=waiver()) + my_theme
+trt_occ_abund_plot
+
+occ_abund_plot <- ggplot() +
+  geom_point(data=asv_rel_4_indic[asv_rel_4_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=asv_rel_4_indic[asv_rel_4_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_4_nm, size=1, aes(y=rplane_4_nm$predictions.freq.pred, x=log10(rplane_4_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_4_nm, aes(y=rplane_4_nm$predictions.pred.upr, x=log10(rplane_4_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_4_nm, aes(y=rplane_4_nm$predictions.pred.lwr, x=log10(rplane_4_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot
+
+ggsave(occ_abund_plot, filename="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/occ_abund_plot.pdf", dpi=300, width=7.5, height=6, units="in")
+
+taxa_above <- rplane_4_nm %>% filter(rplane_4_nm$predictions.freq > (rplane_4_nm$predictions.pred.upr))
+taxa_below <- rplane_4_nm %>% filter(rplane_4_nm$predictions.freq < (rplane_4_nm$predictions.pred.lwr))
+
+taxa_above$asvID <- rownames(taxa_above)
+taxa_above_indic <- merge.data.frame(taxa_above, stage_indicator_ASVs, by="asvID", all.x = T)
+taxa_above_indic <- taxa_above_indic %>% mutate(indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+
+selected_indicator_taxa <- taxa_above_indic %>% filter(indicator == TRUE) %>% arrange(indic_stage)
+# 75 indicator taxa are selected by the plant at growth stages
+selected_indicator_taxa_abund <- left_join(selected_indicator_taxa, asv_rel_4_indic, by="asvID")
+
+write.csv(selected_indicator_taxa_abund, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/selected_indicators.csv")
+
+selected_indicator_taxa_abund <- read.csv(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/selected_indicators_edit_2.csv")
+
+unique(selected_indicator_taxa_abund$predictions.Class)
+table(selected_indicator_taxa_abund$predictions.Class)
+table(selected_indicator_taxa_abund$indic_stage.y)
+
+set.seed(1) #to control jitter
+indicator_taxa_plot <- ggplot() +
+  geom_boxplot(data=selected_indicator_taxa_abund, aes(x=factor(indic_stage.y, levels=sampling_order_growth), y=log_mean)) +
+  geom_jitter(data=selected_indicator_taxa_abund, aes(x=factor(indic_stage.y, levels=sampling_order_growth), y=log_mean, fill=predictions.Class), shape=21, width=0.3, size=3) +
+  xlab("Indicator Taxa Growth Stage") + ylab("log10(Mean Relative Abundance)") + my_theme +
+  scale_fill_manual(name="Indicator Taxa\nClass", breaks=waiver(), values=colors_34) +
+  guides(fill=guide_legend(ncol=5)) #+ theme(legend.position = "bottom") #
+indicator_taxa_plot
+
+set.seed(9)
+ggsave(indicator_taxa_plot, filename="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/indicator_taxa_plot.pdf", dpi=300, width=16, height=6, units="in")
+
+
+# indicators and neutral model at each growth stage
+sample_data(rplane_ps)
+
+rplane_remove_zt <- rplane_ps %>% ps_filter(group != "Zeb_time")
+
+rplane_1_ps <- rplane_remove_zt %>% ps_filter(timepoint == 1)
+rplane_2_ps <- rplane_remove_zt %>% ps_filter(timepoint == 2)
+rplane_3_ps <- rplane_remove_zt %>% ps_filter(timepoint == 3)
+rplane_4_ps <- rplane_remove_zt %>% ps_filter(timepoint == 4)
+rplane_5_ps <- rplane_remove_zt %>% ps_filter(timepoint == 5)
+rplane_6_ps <- rplane_remove_zt %>% ps_filter(timepoint == 6)
+rplane_7_ps <- rplane_remove_zt %>% ps_filter(timepoint == 7)
+
+# stage 1
+
+rplane_1_metadata <- data.frame(sample_data(rplane_1_ps))
+
+rplane_1_asv <- otu_table(rplane_1_ps)
+rplane_1_asv_rel <- apply(decostand(rplane_1_asv, method="total", MARGIN=2),1, mean)
+rplane_1_asv_rel <- data.frame(rplane_1_asv_rel)
+rplane_1_asv_rel$log_mean <- log10(rplane_1_asv_rel$rplane_1_asv_rel)
+rplane_1_asv_rel$asvID <- rownames(rplane_1_asv_rel)
+colnames(rplane_1_asv_rel)[1] <- "mean_rel_abund"
+
+rplane_1_asv[rplane_1_asv > 0] <- 1
+rplane_1_asv_rel$occupancy <- rowSums(rplane_1_asv)/ncol(rplane_1_asv)
+
+rplane_1_asv_rel_indic <- merge.data.frame(rplane_1_asv_rel, stage_indicator_ASVs, by="asvID", all.x = T)
+rplane_1_asv_rel_indic <- rplane_1_asv_rel_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+spp_1 <-t(otu_table(rplane_1_ps))
+spp_1 <- data.frame(spp_1)
+colnames(spp_1) <- gsub("^X", "", colnames(spp_1))
+taxon_1 <- data.frame(tax_table(rplane_1_ps))
+
+rplane_stage1_nm = fit_sncm(spp_1, pool=NULL, taxon_1)
+rplane_stage1_nm <- as.data.frame(rplane_stage1_nm)
+arrange(rplane_stage1_nm, desc(predictions.freq))
+
+above.pred_1 = sum(rplane_stage1_nm$predictions.freq > (rplane_stage1_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_stage1_nm)  # fraction of OTUs above prediction 
+below.pred_1 = sum(rplane_stage1_nm$predictions.freq < (rplane_stage1_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_stage1_nm)  # fraction of OTUs below prediction
+
+occ_abund_plot_1 <- ggplot() +
+  geom_point(data=rplane_1_asv_rel_indic[rplane_1_asv_rel_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rplane_1_asv_rel_indic[rplane_1_asv_rel_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_stage1_nm, size=1, aes(y=rplane_stage1_nm$predictions.freq.pred, x=log10(rplane_stage1_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage1_nm, aes(y=rplane_stage1_nm$predictions.pred.upr, x=log10(rplane_stage1_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage1_nm, aes(y=rplane_stage1_nm$predictions.pred.lwr, x=log10(rplane_stage1_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot_1
+
+
+# stage 2
+
+rplane_2_metadata <- data.frame(sample_data(rplane_2_ps))
+
+rplane_2_asv <- otu_table(rplane_2_ps)
+rplane_2_asv_rel <- apply(decostand(rplane_2_asv, method="total", MARGIN=2),1, mean)
+rplane_2_asv_rel <- data.frame(rplane_2_asv_rel)
+rplane_2_asv_rel$log_mean <- log10(rplane_2_asv_rel$rplane_2_asv_rel)
+rplane_2_asv_rel$asvID <- rownames(rplane_2_asv_rel)
+colnames(rplane_2_asv_rel)[1] <- "mean_rel_abund"
+
+rplane_2_asv[rplane_2_asv > 0] <- 1
+rplane_2_asv_rel$occupancy <- rowSums(rplane_2_asv)/ncol(rplane_2_asv)
+
+rplane_2_asv_rel_indic <- merge.data.frame(rplane_2_asv_rel, stage_indicator_ASVs, by="asvID", all.x = T)
+rplane_2_asv_rel_indic <- rplane_2_asv_rel_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+spp_2 <-t(otu_table(rplane_2_ps))
+spp_2 <- data.frame(spp_2)
+colnames(spp_2) <- gsub("^X", "", colnames(spp_2))
+taxon_2 <- data.frame(tax_table(rplane_2_ps))
+
+rplane_stage2_nm = fit_sncm(spp_2, pool=NULL, taxon_2)
+rplane_stage2_nm <- as.data.frame(rplane_stage2_nm)
+arrange(rplane_stage2_nm, desc(predictions.freq))
+
+above.pred_2 = sum(rplane_stage2_nm$predictions.freq > (rplane_stage2_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_stage2_nm)  # fraction of OTUs above prediction 
+below.pred_2 = sum(rplane_stage2_nm$predictions.freq < (rplane_stage2_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_stage2_nm)  # fraction of OTUs below prediction
+
+occ_abund_plot_2 <- ggplot() +
+  geom_point(data=rplane_2_asv_rel_indic[rplane_2_asv_rel_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rplane_2_asv_rel_indic[rplane_2_asv_rel_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_stage2_nm, size=1, aes(y=rplane_stage2_nm$predictions.freq.pred, x=log10(rplane_stage2_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage2_nm, aes(y=rplane_stage2_nm$predictions.pred.upr, x=log10(rplane_stage2_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage2_nm, aes(y=rplane_stage2_nm$predictions.pred.lwr, x=log10(rplane_stage2_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot_2
+occ_abund_plot_1
+
+
+
+# stage 3
+
+rplane_3_metadata <- data.frame(sample_data(rplane_3_ps))
+
+rplane_3_asv <- otu_table(rplane_3_ps)
+rplane_3_asv_rel <- apply(decostand(rplane_3_asv, method="total", MARGIN=2),1, mean)
+rplane_3_asv_rel <- data.frame(rplane_3_asv_rel)
+rplane_3_asv_rel$log_mean <- log10(rplane_3_asv_rel$rplane_3_asv_rel)
+rplane_3_asv_rel$asvID <- rownames(rplane_3_asv_rel)
+colnames(rplane_3_asv_rel)[1] <- "mean_rel_abund"
+
+rplane_3_asv[rplane_3_asv > 0] <- 1
+rplane_3_asv_rel$occupancy <- rowSums(rplane_3_asv)/ncol(rplane_3_asv)
+
+rplane_3_asv_rel_indic <- merge.data.frame(rplane_3_asv_rel, stage_indicator_ASVs, by="asvID", all.x = T)
+rplane_3_asv_rel_indic <- rplane_3_asv_rel_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+spp_3 <-t(otu_table(rplane_3_ps))
+spp_3 <- data.frame(spp_3)
+colnames(spp_3) <- gsub("^X", "", colnames(spp_3))
+taxon_3 <- data.frame(tax_table(rplane_3_ps))
+
+rplane_stage3_nm = fit_sncm(spp_3, pool=NULL, taxon_3)
+rplane_stage3_nm <- as.data.frame(rplane_stage3_nm)
+arrange(rplane_stage3_nm, desc(predictions.freq))
+
+above.pred_3 = sum(rplane_stage3_nm$predictions.freq > (rplane_stage3_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_stage3_nm)  # fraction of OTUs above prediction 
+below.pred_3 = sum(rplane_stage3_nm$predictions.freq < (rplane_stage3_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_stage3_nm)  # fraction of OTUs below prediction
+
+occ_abund_plot_3 <- ggplot() +
+  geom_point(data=rplane_3_asv_rel_indic[rplane_3_asv_rel_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rplane_3_asv_rel_indic[rplane_3_asv_rel_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_stage3_nm, size=1, aes(y=rplane_stage3_nm$predictions.freq.pred, x=log10(rplane_stage3_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage3_nm, aes(y=rplane_stage3_nm$predictions.pred.upr, x=log10(rplane_stage3_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage3_nm, aes(y=rplane_stage3_nm$predictions.pred.lwr, x=log10(rplane_stage3_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot_3
+
+
+
+# stage 4
+
+rplane_4_metadata <- data.frame(sample_data(rplane_4_ps))
+
+rplane_4_asv <- otu_table(rplane_4_ps)
+rplane_4_asv_rel <- apply(decostand(rplane_4_asv, method="total", MARGIN=2),1, mean)
+rplane_4_asv_rel <- data.frame(rplane_4_asv_rel)
+rplane_4_asv_rel$log_mean <- log10(rplane_4_asv_rel$rplane_4_asv_rel)
+rplane_4_asv_rel$asvID <- rownames(rplane_4_asv_rel)
+colnames(rplane_4_asv_rel)[1] <- "mean_rel_abund"
+
+rplane_4_asv[rplane_4_asv > 0] <- 1
+rplane_4_asv_rel$occupancy <- rowSums(rplane_4_asv)/ncol(rplane_4_asv)
+
+rplane_4_asv_rel_indic <- merge.data.frame(rplane_4_asv_rel, stage_indicator_ASVs, by="asvID", all.x = T)
+rplane_4_asv_rel_indic <- rplane_4_asv_rel_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+spp_4 <-t(otu_table(rplane_4_ps))
+spp_4 <- data.frame(spp_4)
+colnames(spp_4) <- gsub("^X", "", colnames(spp_4))
+taxon_4 <- data.frame(tax_table(rplane_4_ps))
+
+rplane_stage4_nm = fit_sncm(spp_4, pool=NULL, taxon_4)
+rplane_stage4_nm <- as.data.frame(rplane_stage4_nm)
+arrange(rplane_stage4_nm, desc(predictions.freq))
+
+above.pred_4 = sum(rplane_stage4_nm$predictions.freq > (rplane_stage4_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_stage4_nm)  # fraction of OTUs above prediction 
+below.pred_4 = sum(rplane_stage4_nm$predictions.freq < (rplane_stage4_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_stage4_nm)  # fraction of OTUs below prediction
+
+occ_abund_plot_4 <- ggplot() +
+  geom_point(data=rplane_4_asv_rel_indic[rplane_4_asv_rel_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rplane_4_asv_rel_indic[rplane_4_asv_rel_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_stage4_nm, size=1, aes(y=rplane_stage4_nm$predictions.freq.pred, x=log10(rplane_stage4_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage4_nm, aes(y=rplane_stage4_nm$predictions.pred.upr, x=log10(rplane_stage4_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage4_nm, aes(y=rplane_stage4_nm$predictions.pred.lwr, x=log10(rplane_stage4_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot_4
+
+
+
+# stage 5
+
+rplane_5_metadata <- data.frame(sample_data(rplane_5_ps))
+
+rplane_5_asv <- otu_table(rplane_5_ps)
+rplane_5_asv_rel <- apply(decostand(rplane_5_asv, method="total", MARGIN=2),1, mean)
+rplane_5_asv_rel <- data.frame(rplane_5_asv_rel)
+rplane_5_asv_rel$log_mean <- log10(rplane_5_asv_rel$rplane_5_asv_rel)
+rplane_5_asv_rel$asvID <- rownames(rplane_5_asv_rel)
+colnames(rplane_5_asv_rel)[1] <- "mean_rel_abund"
+
+rplane_5_asv[rplane_5_asv > 0] <- 1
+rplane_5_asv_rel$occupancy <- rowSums(rplane_5_asv)/ncol(rplane_5_asv)
+
+rplane_5_asv_rel_indic <- merge.data.frame(rplane_5_asv_rel, stage_indicator_ASVs, by="asvID", all.x = T)
+rplane_5_asv_rel_indic <- rplane_5_asv_rel_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+spp_5 <-t(otu_table(rplane_5_ps))
+spp_5 <- data.frame(spp_5)
+colnames(spp_5) <- gsub("^X", "", colnames(spp_5))
+taxon_5 <- data.frame(tax_table(rplane_5_ps))
+
+rplane_stage5_nm = fit_sncm(spp_5, pool=NULL, taxon_5)
+rplane_stage5_nm <- as.data.frame(rplane_stage5_nm)
+arrange(rplane_stage5_nm, desc(predictions.freq))
+
+above.pred_5 = sum(rplane_stage5_nm$predictions.freq > (rplane_stage5_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_stage5_nm)  # fraction of OTUs above prediction 
+below.pred_5 = sum(rplane_stage5_nm$predictions.freq < (rplane_stage5_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_stage5_nm)  # fraction of OTUs below prediction
+
+occ_abund_plot_5 <- ggplot() +
+  geom_point(data=rplane_5_asv_rel_indic[rplane_5_asv_rel_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rplane_5_asv_rel_indic[rplane_5_asv_rel_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_stage5_nm, size=1, aes(y=rplane_stage5_nm$predictions.freq.pred, x=log10(rplane_stage5_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage5_nm, aes(y=rplane_stage5_nm$predictions.pred.upr, x=log10(rplane_stage5_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage5_nm, aes(y=rplane_stage5_nm$predictions.pred.lwr, x=log10(rplane_stage5_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot_5
+
+
+# stage 6
+
+rplane_6_metadata <- data.frame(sample_data(rplane_6_ps))
+
+rplane_6_asv <- otu_table(rplane_6_ps)
+rplane_6_asv_rel <- apply(decostand(rplane_6_asv, method="total", MARGIN=2),1, mean)
+rplane_6_asv_rel <- data.frame(rplane_6_asv_rel)
+rplane_6_asv_rel$log_mean <- log10(rplane_6_asv_rel$rplane_6_asv_rel)
+rplane_6_asv_rel$asvID <- rownames(rplane_6_asv_rel)
+colnames(rplane_6_asv_rel)[1] <- "mean_rel_abund"
+
+rplane_6_asv[rplane_6_asv > 0] <- 1
+rplane_6_asv_rel$occupancy <- rowSums(rplane_6_asv)/ncol(rplane_6_asv)
+
+rplane_6_asv_rel_indic <- merge.data.frame(rplane_6_asv_rel, stage_indicator_ASVs, by="asvID", all.x = T)
+rplane_6_asv_rel_indic <- rplane_6_asv_rel_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+spp_6 <-t(otu_table(rplane_6_ps))
+spp_6 <- data.frame(spp_6)
+colnames(spp_6) <- gsub("^X", "", colnames(spp_6))
+taxon_6 <- data.frame(tax_table(rplane_6_ps))
+
+rplane_stage6_nm = fit_sncm(spp_6, pool=NULL, taxon_6)
+rplane_stage6_nm <- as.data.frame(rplane_stage6_nm)
+arrange(rplane_stage6_nm, desc(predictions.freq))
+
+above.pred_6 = sum(rplane_stage6_nm$predictions.freq > (rplane_stage6_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_stage6_nm)  # fraction of OTUs above prediction 
+below.pred_6 = sum(rplane_stage6_nm$predictions.freq < (rplane_stage6_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_stage6_nm)  # fraction of OTUs below prediction
+
+occ_abund_plot_6 <- ggplot() +
+  geom_point(data=rplane_6_asv_rel_indic[rplane_6_asv_rel_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rplane_6_asv_rel_indic[rplane_6_asv_rel_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_stage6_nm, size=1, aes(y=rplane_stage6_nm$predictions.freq.pred, x=log10(rplane_stage6_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage6_nm, aes(y=rplane_stage6_nm$predictions.pred.upr, x=log10(rplane_stage6_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage6_nm, aes(y=rplane_stage6_nm$predictions.pred.lwr, x=log10(rplane_stage6_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot_6
+
+
+# stage 7
+
+rplane_7_metadata <- data.frame(sample_data(rplane_7_ps))
+
+rplane_7_asv <- otu_table(rplane_7_ps)
+rplane_7_asv_rel <- apply(decostand(rplane_7_asv, method="total", MARGIN=2),1, mean)
+rplane_7_asv_rel <- data.frame(rplane_7_asv_rel)
+rplane_7_asv_rel$log_mean <- log10(rplane_7_asv_rel$rplane_7_asv_rel)
+rplane_7_asv_rel$asvID <- rownames(rplane_7_asv_rel)
+colnames(rplane_7_asv_rel)[1] <- "mean_rel_abund"
+
+rplane_7_asv[rplane_7_asv > 0] <- 1
+rplane_7_asv_rel$occupancy <- rowSums(rplane_7_asv)/ncol(rplane_7_asv)
+
+rplane_7_asv_rel_indic <- merge.data.frame(rplane_7_asv_rel, stage_indicator_ASVs, by="asvID", all.x = T)
+rplane_7_asv_rel_indic <- rplane_7_asv_rel_indic %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+spp_7 <-t(otu_table(rplane_7_ps))
+spp_7 <- data.frame(spp_7)
+colnames(spp_7) <- gsub("^X", "", colnames(spp_7))
+taxon_7 <- data.frame(tax_table(rplane_7_ps))
+
+rplane_stage7_nm = fit_sncm(spp_7, pool=NULL, taxon_7)
+rplane_stage7_nm <- as.data.frame(rplane_stage7_nm)
+arrange(rplane_stage7_nm, desc(predictions.freq))
+
+above.pred_7 = sum(rplane_stage7_nm$predictions.freq > (rplane_stage7_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_stage7_nm)  # fraction of OTUs above prediction 
+below.pred_7 = sum(rplane_stage7_nm$predictions.freq < (rplane_stage7_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_stage7_nm)  # fraction of OTUs below prediction
+
+occ_abund_plot_7 <- ggplot() +
+  geom_point(data=rplane_7_asv_rel_indic[rplane_7_asv_rel_indic$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rplane_7_asv_rel_indic[rplane_7_asv_rel_indic$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rplane_stage7_nm, size=1, aes(y=rplane_stage7_nm$predictions.freq.pred, x=log10(rplane_stage7_nm$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage7_nm, aes(y=rplane_stage7_nm$predictions.pred.upr, x=log10(rplane_stage7_nm$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rplane_stage7_nm, aes(y=rplane_stage7_nm$predictions.pred.lwr, x=log10(rplane_stage7_nm$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+occ_abund_plot_7
+
+above.pred_1
+above.pred_2
+above.pred_3
+above.pred_4
+above.pred_5
+above.pred_6
+above.pred_7
+
+below.pred_1
+below.pred_2
+below.pred_3
+below.pred_4
+below.pred_5
+below.pred_6
+below.pred_7
+```
+# rhizosphere indicators and neutral model
+```{r}
+rsphere_ps
+
+rsphere_otu_table <- otu_table(rsphere_ps)
+abundance <- data.frame(taxa_sums(rsphere_otu_table))
+
+rsphere_otu_table <- data.frame(rsphere_otu_table)
+rsphere_otu_table$asvID <- rownames(rsphere_otu_table)
+abundance$asvID <- rownames(abundance)
+
+rsphere_otu_table_w_abund <- left_join(abundance, rsphere_otu_table, by="asvID")
+
+
+# indicator species ####
+rsphere_ASV_table_filter <- rsphere_otu_table_w_abund %>% filter(taxa_sums.rsphere_otu_table. > 100) %>% arrange(desc(taxa_sums.rsphere_otu_table.))
+
+rsphere_keep_taxa_100 <- as.vector(rsphere_ASV_table_filter$asvID)
+
+rsphere_ps_100 <- prune_taxa(rsphere_keep_taxa_100, rsphere_ps)
+
+
+rsphere_ASV_table <- t(otu_table(rsphere_ps_100))
+rsphere_ASV_table <- data.frame(rsphere_ASV_table)
+
+rsphere_metadata <- data.frame(sample_data(rsphere_ps))
+
+rsphere_treatment <- c(rsphere_metadata$treatment)
+rsphere_stage <- c(rsphere_metadata$stage)
+
+indic_rsphere_stage <- multipatt(rsphere_ASV_table, rsphere_stage, duleg=TRUE, control=how(nperm=9999))
+summary(indic_rsphere_stage)
+sink(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rsphere_stage_indicators.csv")
+summary(indic_rsphere_stage)
+sink()
+
+rsphere_stage_indicators <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rsphere_stage_indicators_edit.csv")
+rsphere_stage_indicators <- rsphere_stage_indicators %>% mutate(asvID = gsub("^X", "", asvID))
+
+indic_rsphere_treatment <- multipatt(rsphere_ASV_table, rsphere_treatment, duleg=TRUE, control=how(nperm=9999))
+summary(indic_rsphere_treatment)
+sink(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rhizosphere_indicators_treatment.csv")
+summary(indic_rsphere_treatment)
+sink()
+
+rsphere_treatment_indicators <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/rhizosphere_indicators_treatment_edit.csv")
+rsphere_treatment_indicators <- rsphere_treatment_indicators %>% mutate(asvID = gsub("^X", "", asvID))
+
+
+# occ_abund
+
+rsphere_ASV_table_filter_9 <- rsphere_otu_table_w_abund %>% filter(taxa_sums.rsphere_otu_table. > 9) %>% arrange(desc(taxa_sums.rsphere_otu_table.))
+
+rsphere_keep_taxa_9 <- as.vector(rsphere_ASV_table_filter_4$asvID)
+
+rsphere_ps_9 <- prune_taxa(rsphere_keep_taxa_9, rsphere_ps)
+
+rsphere_metadata <- data.frame(sample_data(rsphere_ps_9))
+
+rsphere_asv_9 <- otu_table(rsphere_ps_9)
+rsphere_asv_rel_9 <- apply(decostand(rsphere_asv_9, method="total", MARGIN=2),1, mean)
+rsphere_asv_rel_9 <- data.frame(rsphere_asv_rel_9)
+rsphere_asv_rel_9$log_mean <- log10(rsphere_asv_rel_9$rsphere_asv_rel_9)
+rsphere_asv_rel_9$asvID <- rownames(rsphere_asv_rel_9)
+colnames(rsphere_asv_rel_9)[1] <- "mean_rel_abund"
+
+rsphere_asv_9[rsphere_asv_9 > 0] <- 1
+rsphere_asv_rel_9$occupancy <- rowSums(rsphere_asv_9)/ncol(rsphere_asv_9)
+
+rsphere_asv_rel_indic_9 <- merge.data.frame(rsphere_asv_rel_9, rsphere_stage_indicators, by="asvID", all.x = T)
+rsphere_asv_rel_indic_9 <- rsphere_asv_rel_indic_9 %>% mutate(stage_indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+rsphere_asv_rel_indic_9 <- merge.data.frame(rsphere_asv_rel_indic_9, rsphere_treatment_indicators, by="asvID", all.x = T)
+rsphere_asv_rel_indic_9 <- rsphere_asv_rel_indic_9 %>% mutate(trt_indicator = if_else(is.na(treatment), FALSE, TRUE))
+
+spp_rs_9 <-t(otu_table(rsphere_ps_9))
+spp_rs_9 <- data.frame(spp_rs_9)
+colnames(spp_rs_9) <- gsub("^X", "", colnames(spp_rs_9))
+taxon_rs_9 <- data.frame(tax_table(rsphere_ps_9))
+
+rsphere_nm_9 = fit_sncm(spp_rs_9, pool=NULL, taxon_rs_9)
+rsphere_nm_9 <- as.data.frame(rsphere_nm_9)
+arrange(rsphere_nm_9, desc(predictions.freq))
+
+above.pred_rs_9 = sum(rsphere_nm_9$predictions.freq > (rsphere_nm_9$predictions.pred.upr), na.rm=TRUE)/nrow(rsphere_nm_9)  # fraction of OTUs above prediction 
+below.pred_rs_9 = sum(rsphere_nm_9$predictions.freq < (rsphere_nm_9$predictions.pred.lwr), na.rm=TRUE)/nrow(rsphere_nm_9)  # fraction of OTUs below prediction
+
+stage_occ_abund_plot_rs_9 <- ggplot() +
+  geom_point(data=rsphere_asv_rel_indic_9[rsphere_asv_rel_indic_9$stage_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rsphere_asv_rel_indic_9[rsphere_asv_rel_indic_9$stage_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=indic_stage), shape=21, size=2.5) +
+  geom_line(color='black', data=rsphere_nm_9, size=1, aes(y=rsphere_nm_9$predictions.freq.pred, x=log10(rsphere_nm_9$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rsphere_nm_9, aes(y=rsphere_nm_9$predictions.pred.upr, x=log10(rsphere_nm_9$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rsphere_nm_9, aes(y=rsphere_nm_9$predictions.pred.lwr, x=log10(rsphere_nm_9$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
+stage_occ_abund_plot_rs_9
+
+taxa_above_rs <- rsphere_nm_9 %>% filter(rsphere_nm_9$predictions.freq > (rsphere_nm_9$predictions.pred.upr))
+taxa_below_rs <- rsphere_nm_9 %>% filter(rsphere_nm_9$predictions.freq < (rsphere_nm_9$predictions.pred.lwr))
+
+taxa_above_rs$asvID <- rownames(taxa_above_rs)
+taxa_above_indic_rs <- merge.data.frame(taxa_above_rs, rsphere_stage_indicators, by="asvID", all.x = T)
+taxa_above_indic_rs <- taxa_above_indic_rs %>% mutate(indicator = if_else(is.na(indic_stage), FALSE, TRUE))
+
+
+selected_indicator_taxa_rs <- taxa_above_indic_rs %>% filter(indicator == TRUE) %>% arrange(indic_stage)
+# 33 indicator taxa are selected by the plant at growth stages in the rhizosphere
+selected_indicator_taxa_rs_abund <- left_join(selected_indicator_taxa_rs, rsphere_asv_rel_indic_9, by="asvID")
+
+trt_occ_abund_plot_rs_9 <- ggplot() +
+  geom_point(data=rsphere_asv_rel_indic_4[rsphere_asv_rel_indic_4$trt_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
+  geom_point(data=rsphere_asv_rel_indic_4[rsphere_asv_rel_indic_4$trt_indicator==TRUE,], aes(x=log_mean, y=occupancy, fill=treatment), shape=21, size=2.5) +
+  geom_line(color='black', data=rsphere_nm_4, size=1, aes(y=rsphere_nm_4$predictions.freq.pred, x=log10(rsphere_nm_4$predictions.p)), alpha=.5) +
+  geom_line(color='black', lty='dashed', size=1, data=rsphere_nm_4, aes(y=rsphere_nm_4$predictions.pred.upr, x=log10(rsphere_nm_4$predictions.p)), alpha=.5)+
+  geom_line(color='black', lty='dashed', size=1, data=rsphere_nm_4, aes(y=rsphere_nm_4$predictions.pred.lwr, x=log10(rsphere_nm_4$predictions.p)), alpha=.5)+
+  labs(x="log10(mean relative abundance)", y="Occupancy") +
+  scale_fill_manual(name="Treatment\nIndicator Taxa", values=colors, breaks=waiver()) + my_theme
+trt_occ_abund_plot_rs_4
+
+```
+
