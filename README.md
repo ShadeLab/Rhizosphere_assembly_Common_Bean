@@ -22,7 +22,7 @@ Coming soon.
 
 ### Contents
 
-Code is split up into four directories: [Rhizo_assembly_seq_processing.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_seq_processing.Rmd), [Rhizo_assembly_decontam.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_decontam.Rmd), [Rhizo_assembly_analysis.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_analysis.Rmd), and [Rhizho_Assembly_health_analysis.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizho_Assembly_health_analysis.Rmd). Files necessary to run R code are located in [R_Analysis_Files](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/tree/main/R_Analysis_Files).
+Code is split up into four directories: [Rhizo_assembly_seq_processing.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_seq_processing.Rmd), [Rhizo_assembly_decontam.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_decontam.Rmd), [Rhizo_assembly_analysis.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_analysis.Rmd), and [Rhizo_Assembly_health_analysis.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_Assembly_health_analysis.Rmd). Files necessary to run R code are located in [R_Analysis_Files](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/tree/main/R_Analysis_Files).
 
 #### Sequence processing
 Code used for sequence processing including read QC, ASV clustering, taxonomy assignment, and tree building can be found under  [Rhizo_assembly_seq_processing.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_seq_processing.Rmd). Scripts were run in QIIME2 using SLURM on the MSU HPCC using slurm batch files with suffix .sb. 
@@ -34,7 +34,7 @@ Code for sequence decontamination by extraction group can be found in [Rhizo_ass
 Formal analysis can be found under [Rhizo_assembly_analysis.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_assembly_analysis.Rmd). All analysis was run with R and code was run in Rmarkdown. Input files for Procrustes analysis can be found in R_Analysis_Files/Procrustes_analysis_files folder.
 
 #### Plant Phenotypic trait analysis
-Above and below-ground plant measurements are located in the R_Analysis_Files folder. Root measurements were performed in ImageJ. Analysis code can be found at [Rhizho_Assembly_health_analysis.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizho_Assembly_health_analysis.Rmd).
+Above and below-ground plant measurements are located in the R_Analysis_Files folder. Root measurements were performed in ImageJ. Analysis code can be found at [Rhizo_Assembly_health_analysis.Rmd](https://github.com/ShadeLab/Rhizosphere_assembly_Common_Bean/blob/main/Rhizo_Assembly_health_analysis.Rmd).
 
 ### Funding
 This work was supported by the Michigan State University [Plant Resilience Institute](https://plantresilience.msu.edu). 
