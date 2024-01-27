@@ -2088,6 +2088,7 @@ trt_occ_abund_plot_rs_4
 
 ```
 
+```{r}
 # getting clean tax list for selected indicators
 
 selected_list <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/selected_indicators_edit_2.csv")
