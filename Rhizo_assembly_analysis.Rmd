@@ -46,7 +46,7 @@ library(stats4)
 setwd("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/")
 
 # load phyloseq
-RA_phyloseq <- readRDS("RA_phyloseq_rarefied.rds")
+RA_phyloseq <- readRDS("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/RA_phyloseq_rarefied.rds")
 
 # add group and timepoint categories in metadata for analysis
 #write.csv(data.frame(sample_data(RA_phyloseq)), file="metadata_update.csv")
@@ -2086,5 +2086,16 @@ trt_occ_abund_plot_rs_9 <- ggplot() +
   scale_fill_manual(name="Treatment\nIndicator Taxa", values=colors, breaks=waiver()) + my_theme
 trt_occ_abund_plot_rs_4
 
+```
+
+# getting clean tax list for selected indicators
+
+selected_list <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/selected_indicators_edit_2.csv")
+taxonomy <- data.frame(tax_table(rplane_ps))
+taxonomy$asvID <- rownames(taxonomy)
+
+new_list <- left_join(selected_list, taxonomy)
+
+write.csv(new_list, "/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/selected_indicators_clean.csv")
 ```
 
