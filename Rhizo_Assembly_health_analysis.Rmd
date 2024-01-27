@@ -178,8 +178,7 @@ fresh_time_49 # ***
 fresh_time_63 <- t.test(predry ~ group, data = time_63, na.action = "na.omit")
 fresh_time_63 # ns .08
 
-#height_growth_V1 <- t.test(predry ~ group, data = growth_V1, na.action = "na.omit")
-#height_growth_V1 # ** .004
+
 fresh_growth_V2 <- t.test(predry ~ group, data = growth_V2, na.action = "na.omit")
 fresh_growth_V2 # ** .002
 fresh_growth_V3 <- t.test(predry ~ group, data = growth_V3, na.action = "na.omit")
@@ -226,7 +225,7 @@ dry_growth_R7 # ns
 
 ### Root analysis
 ```{r}
-data_root_length <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/root_length_data_all.csv", header=TRUE)
+data_root_length <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/Rhizosphere_assembly_Common_Bean/R_Analysis_Files/root_length_data_all.csv", header=TRUE)
 
 str(data_root_length)
 
