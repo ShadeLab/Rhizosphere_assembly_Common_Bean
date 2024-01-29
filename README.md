@@ -10,7 +10,7 @@
 ### Data
 The raw sequence data for this study are available in the NCBI SRA under bioproject [PRJNA1066866](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1066866/)
 
-Root photos for this study can be found on Figshare at doi:
+Root photos for this study can be found on Figshare at the following DOIs: doi.org/10.6084/m9.figshare.25054997, doi.org/10.6084/m9.figshare.25055087, doi.org/10.6084/m9.figshare.25055774, doi.org/10.6084/m9.figshare.25057067.
 
 ### To cite this work or code
 Coming soon.
