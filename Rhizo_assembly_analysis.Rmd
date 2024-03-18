@@ -51,7 +51,7 @@ RA_phyloseq <- readRDS("/Users/Abby/OneDrive - Michigan State University/Rhizo_a
 # add group and timepoint categories in metadata for analysis
 #write.csv(data.frame(sample_data(RA_phyloseq)), file="metadata_update.csv")
 
-meta_update <- read.csv("metadata_update_edit.csv", sep=",", row.names = 1)
+meta_update <- read.csv("/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/Rhizosphere_assembly_Common_Bean/R_Analysis_Files/metadata_update_edit.csv", sep=",", row.names = 1)
 meta <- sample_data(meta_update)
 tax <- tax_table(RA_phyloseq)
 asv <- otu_table(RA_phyloseq)
@@ -1373,7 +1373,7 @@ abundance$asvID <- rownames(abundance)
 
 rplane_otu_table_w_abund <- left_join(abundance, rplane_otu_table, by="asvID")
 
-rplane_otu_table_high <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 5000) %>% arrange(desc(taxa_sums.rplane_otu_table.))
+rplane_otu_table_high <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 10000) %>% arrange(desc(taxa_sums.rplane_otu_table.))
 
 keep_taxa_list <- as.vector(rplane_otu_table_high$asvID)
 
@@ -1387,19 +1387,55 @@ rplane_high_otu <- data.frame(otu_table(rplane_ps_high_abund))
 
 rplane_high_tax <- data.frame(tax_table(rplane_ps_high_abund))
 
-family_list <- unique(c(rplane_high_tax$Family)) 
-#34 families
-number_list <- c(1:34)
+rplane_high_tax$Genus[11] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[14] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[18] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[24] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[26] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[27] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[28] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[30] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[36] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[37] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[46] <- "f__Comamonadaceae"
+rplane_high_tax$Genus[50] <- "f__Comamonadaceae"
 
-family_numbers <- data.frame(family_list, number_list) 
-colnames(family_numbers)[1] <- "Family"
-new_table <- left_join(rplane_high_tax, family_numbers, by="Family")
+rplane_high_tax$Genus[12] <- "f__Methyloligellaceae"
+
+rplane_high_tax$Genus[19] <- "o__Bacillales"
+rplane_high_tax$Genus[55] <- "o__Bacillales"
+
+rplane_high_tax$Genus[56] <- "f__Rhizobiaceae"
+rplane_high_tax$Genus[47] <- "f__Rhizobiaceae"
+
+rplane_high_tax$Genus[23] <- "f__Micrococcaceae"
+
+rplane_high_tax$Genus[44] <- "f__Spirosomaceae"
+
+rplane_high_tax$Genus[40] <- "f__Oxalobacteraceae"
+
+rplane_high_tax$Genus[] == "g__Allorhizobium-Neorhizobium-Pararhizobium-Rhizobium" 
+# 9, 34, 54, 57 
+rplane_high_tax$Genus[9] <- "g__Allo-Neo-Para-Rhizobium"
+rplane_high_tax$Genus[34] <- "g__Allo-Neo-Para-Rhizobium"
+rplane_high_tax$Genus[54] <- "g__Allo-Neo-Para-Rhizobium"
+rplane_high_tax$Genus[57] <- "g__Allo-Neo-Para-Rhizobium"
+
+family_list <- unique(c(rplane_high_tax$Family)) 
+#21 families
+genus_list <- unique(c(rplane_high_tax$Genus))
+#33 genera
+number_list <- c(1:33)
+
+genus_numbers <- data.frame(genus_list, number_list) 
+colnames(genus_numbers)[1] <- "Genus"
+new_table <- left_join(rplane_high_tax, genus_numbers, by="Genus")
 number_table_list <- new_table$number_list
 rplane_high_tax$number_list <- number_table_list
 
-family_list[22] <- "Unidentified"
 
-# need 34 colors
+
+# need 33 colors
 colors_a <- paletteer_d("ggthemes::Classic_20")
 colors_b <- paletteer_d("tvthemes::kimPossible") #12
 colors_b_6 <- colors_b[7:12]
@@ -1427,20 +1463,21 @@ annotate <- HeatmapAnnotation(Treatment = rplane_high_meta$treatment, Sampling_p
 ))
 
 
-annotate_family <- rowAnnotation(ASV_Family = rplane_high_tax$number_list, col = list(ASV_Family = c('1' = colors_34[1], '2' = colors_34[2], '3' = colors_34[3], '4' = colors_34[4], '5' = colors_34[5], '6' = colors_34[6], '7' = colors_34[7], '8' = colors_34[8], '9' = colors_34[9], '10' = colors_34[10], '11' = colors_34[11], '12' = colors_34[12], '13' = colors_34[13], '14' = colors_34[14], '15' = colors_34[15], '16' = colors_34[16], '17' = colors_34[17], '18' = colors_34[18], '19' = colors_34[19], '20' = colors_34[20], '21' = colors_34[21], '22' = colors_34[22], '23' = colors_34[23], '24' = colors_34[24], '25' = colors_34[25], '26' = colors_34[26], '27' = colors_34[27], '28' = colors_34[28], '29' = colors_34[29], '30' = colors_34[30], '31' = colors_34[31], '32' = colors_34[32], '33' = colors_34[33], '34' = colors_34[34])),                                  annotation_legend_param = list(ASV_Family = list(
-                title = "ASV Family",
+annotate_genus <- rowAnnotation(ASV_Tax = rplane_high_tax$number_list, col = list(ASV_Tax = c('1' = colors_34[1], '2' = colors_34[2], '3' = colors_34[3], '4' = colors_34[4], '5' = colors_34[5], '6' = colors_34[6], '7' = colors_34[7], '8' = colors_34[8], '9' = colors_34[9], '10' = colors_34[10], '11' = colors_34[11], '12' = colors_34[12], '13' = colors_34[13], '14' = colors_34[14], '15' = colors_34[15], '16' = colors_34[16], '17' = colors_34[17], '18' = colors_34[18], '19' = colors_34[19], '20' = colors_34[20], '21' = colors_34[21], '22' = colors_34[22], '23' = colors_34[23], '24' = colors_34[24], '25' = colors_34[25], '26' = colors_34[26], '27' = colors_34[27], '28' = colors_34[28], '29' = colors_34[29], '30' = colors_34[30], '31' = colors_34[31], '32' = colors_34[32], '33' = colors_34[33])),                                  
+    annotation_legend_param = list(ASV_Tax = list(
+                title = "ASV Taxonomy",
                 at = number_list,
-                labels = family_list)))
+                labels = genus_list)))
 
 series_names = c("growth" = "Growth Stage", "time" = "Time Series")
 
-rhizoplane_hm <- Heatmap(rplane_high_otu, name="ASV reads\nper sample", show_row_names = FALSE, column_split=rplane_high_meta$series, top_annotation = annotate, row_title = "ASV", right_annotation = annotate_family, column_title = series_names, use_raster = TRUE, 
+rhizoplane_hm <- Heatmap(rplane_high_otu, name="ASV reads\nper sample", show_row_names = FALSE, column_split=rplane_high_meta$series, top_annotation = annotate, row_title = "ASV", right_annotation = annotate_genus, column_title = series_names, use_raster = TRUE, 
         raster_device = "png")
 draw(rhizoplane_hm, heatmap_legend_side = "right")
 
-pdf(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/heatmap.pdf", width = 15, height = 9)
-rhizoplane_hm <- Heatmap(rplane_high_otu, name="ASV reads\nper sample", show_row_names = FALSE, column_split=rplane_high_meta$series, top_annotation = annotate, row_title = "ASV", right_annotation = annotate_family, column_title = series_names, column_names_gp = gpar(fontsize = 6))
-draw(rhizoplane_hm)
+pdf(file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/heatmap.pdf", width = 16, height = 9)
+rhizoplane_hm <- Heatmap(rplane_high_otu, name="ASV reads\nper sample", show_row_names = FALSE, column_split=rplane_high_meta$series, top_annotation = annotate, row_title = "ASV", right_annotation = annotate_genus, column_title = series_names, column_names_gp = gpar(fontsize = 6))
+draw(rhizoplane_hm, heatmap_legend_side = "right", annotation_legend_side = "right")
 dev.off()
 ```
 
@@ -1498,6 +1535,8 @@ stage_indicator_ASVs <- read.csv("/Users/Abby/OneDrive - Michigan State Universi
 stage_indicator_ASVs$asvID <- as.character(stage_indicator_ASVs$asvID)
 stage_indicator_ASVs <- stage_indicator_ASVs %>% mutate(asvID = gsub("^X", "", asvID))
 
+table(stage_indicator_ASVs$indic_stage)
+
 # add log relative adundance, indic, occupancy to ASV table
 count_rplane_100 <- otu_table(rplane_ps_100)
 count_rplane_100[count_rplane_100 > 0] <- 1
@@ -1534,7 +1573,7 @@ rank_abund_plot2
 
 
 # use more of the dataset
-rplane_ASV_table_filter <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 10) %>% arrange(desc(taxa_sums.rplane_otu_table.))
+rplane_ASV_table_filter <- rplane_otu_table_w_abund %>% filter(taxa_sums.rplane_otu_table. > 5) %>% arrange(desc(taxa_sums.rplane_otu_table.))
 # 4,303 taxa
 keep_taxa_10 <- as.vector(rplane_ASV_table_filter$asvID)
 
@@ -1595,10 +1634,11 @@ rplane_4_nm = fit_sncm(spp, pool=NULL, taxon)
 rplane_4_nm <- as.data.frame(rplane_4_nm)
 arrange(rplane_4_nm, desc(predictions.freq))
 
-above.pred = sum(rplane_4_nm$predictions.freq > (rplane_4_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_4_nm)  # fraction of OTUs above prediction 
-below.pred = sum(rplane_4_nm$predictions.freq < (rplane_4_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_4_nm)  # fraction of OTUs below prediction
+above.pred = sum(rplane_4_nm$predictions.freq > (rplane_4_nm$predictions.pred.upr), na.rm=TRUE)/nrow(rplane_4_nm)  # fraction of OTUs above prediction # 13.61 %
+below.pred = sum(rplane_4_nm$predictions.freq < (rplane_4_nm$predictions.pred.lwr), na.rm=TRUE)/nrow(rplane_4_nm)  # fraction of OTUs below prediction # 4.32 %
 
 100 - (above.pred*100) - (below.pred*100)
+# 82. 07 %
 
 trt_occ_abund_plot <- ggplot() +
   geom_point(data=asv_rel_4_indic[asv_rel_4_indic$trt_indicator==FALSE,], aes(x=log_mean, y=occupancy), pch=21, fill='white', alpha=.3, size=2)+
@@ -1620,7 +1660,7 @@ occ_abund_plot <- ggplot() +
   scale_fill_manual(name="Growth Stage\nIndicator Taxa", values=c('#FFA8D4','#CE498B','#B6DBFFFF','#6DB6FFFF','#006DDBFF', '#B66DFFFF','#490092FF'), breaks=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")) + my_theme
 occ_abund_plot
 
-ggsave(occ_abund_plot, filename="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/occ_abund_plot.pdf", dpi=300, width=7.5, height=6, units="in")
+ggsave(occ_abund_plot, filename="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/occ_abund_plot_2.pdf", dpi=300, width=9, height=6, units="in")
 
 taxa_above <- rplane_4_nm %>% filter(rplane_4_nm$predictions.freq > (rplane_4_nm$predictions.pred.upr))
 taxa_below <- rplane_4_nm %>% filter(rplane_4_nm$predictions.freq < (rplane_4_nm$predictions.pred.lwr))
@@ -1641,6 +1681,9 @@ selected_indicator_taxa_abund <- read.csv(file="/Users/Abby/OneDrive - Michigan 
 unique(selected_indicator_taxa_abund$predictions.Class)
 table(selected_indicator_taxa_abund$predictions.Class)
 table(selected_indicator_taxa_abund$indic_stage.y)
+unique(selected_indicator_taxa_abund$predictions.Genus)
+unique(selected_indicator_taxa_abund$predictions.Family)
+unique(selected_indicator_taxa_abund$predictions.Order)
 
 set.seed(1) #to control jitter
 indicator_taxa_plot <- ggplot() +
@@ -1654,6 +1697,31 @@ indicator_taxa_plot
 set.seed(9)
 ggsave(indicator_taxa_plot, filename="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/indicator_taxa_plot.pdf", dpi=300, width=16, height=6, units="in")
 
+
+#bar plot of selected indicators?
+indic_barplot <- ggplot(data=selected_indicator_taxa_abund, aes(x=factor(indic_stage.y, levels=sampling_order_growth), fill=predictions.Class)) +
+  geom_bar(position = "stack") +
+  xlab("Indicator Taxa Growth Stage") + ylab("Selected Indicator Taxa Count") +
+  scale_fill_manual(name="Indicator Taxa\nClass", breaks=waiver(), values=colors_34) +
+  my_theme +
+  guides(fill=guide_legend(ncol=5)) + theme(legend.position = "right")
+indic_barplot
+
+ggsave(indic_barplot, filename="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/indicator_barplot.pdf", dpi=300, width=13, height=6, units="in")
+
+
+  
+#bar plot of selected indicators?
+# indic_barplot <- ggplot(data=selected_indicator_taxa_abund, aes(x=indicator, y=mean_rel_abund, fill=predictions.Class)) +
+#   geom_col(position = "stack") +
+#   xlab("Indicator Taxa Growth Stage") + ylab("Selected Indicator Taxa Count") +
+#   scale_fill_manual(name="Indicator Taxa\nClass", breaks=waiver(), values=colors_34) +
+#   my_theme +
+#   guides(fill=guide_legend(ncol=5)) + theme(legend.position = "bottom")
+# indic_barplot
+  
+  
+  
 
 # indicators and neutral model at each growth stage
 sample_data(rplane_ps)
