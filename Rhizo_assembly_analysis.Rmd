@@ -57,6 +57,17 @@ tax <- tax_table(RA_phyloseq)
 asv <- otu_table(RA_phyloseq)
 
 RAphyloseq <- merge_phyloseq(meta, tax, asv)
+RAsampledata <- data.frame(sample_data(RAphyloseq))
+RA_ASVtable <- data.frame(otu_table(RAphyloseq))
+RA_taxtable <- data.frame(tax_table(RAphyloseq))
+
+RA_ASVtable$sum <- rowSums(RA_ASVtable)
+RA_ASVtable_filtered <- filter(RA_ASVtable, RA_ASVtable$sum > 2)
+RA_ASVtable_filtered <- RA_ASVtable[order(RA_ASVtable$sum, decreasing=TRUE),]
+
+# write.csv(RAsampledata, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/bean_assembly_metadata.csv")
+# write.csv(RA_ASVtable_filtered, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/bean_assembly_ASVtable.csv")
+# write.csv(RA_taxtable, file="/Users/Abby/OneDrive - Michigan State University/Rhizo_assembly/bean_assembly_taxtable.csv")
 
 #sample_names(RAphyloseq)
 #sample_data(RAphyloseq)

@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
 ```
 
 
@@ -101,7 +101,7 @@ gunzip *fastq.gz
 echo -e "\n `sacct -u suleskya -j $SLURM_JOB_ID --format=JobID,JobName,Start,End,Elapsed,NCPUS,ReqMem` \n"
 scontrol show job $SLURM_JOB_ID
 
-than go abck and delete job file and slurm output, need to only have unzipped fastqs in the input folder
+than go back and delete job file and slurm output, need to only have unzipped fastqs in the input folder
 
 
 go to home directory where figaro is installed to run figaro:
