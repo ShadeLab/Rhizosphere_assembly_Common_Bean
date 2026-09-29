@@ -1,0 +1,247 @@
+## This is the code for Project Rizhospere Assembly Project
+## Author: Xipeng Liu
+## Time: 2025-02-05
+
+
+
+# Samplelist
+
+ls *.fq.gz > sample_list.txt
+
+sed 's/\.R[12]\.fq\.gz//g' sample_list.txt > new_sample_list.txt
+
+sort new_sample_list.txt | uniq > sample_name_list.txt
+
+
+# transer data from MSU-HPCC to Habrok
+### start at 29-07-2024
+
+rsync -azv k0107955@hpcc.msu.edu:/mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_data/*fq.gz /projects/p290555/p290555/project_bean/
+
+rsync -azv k0107955@hpcc.msu.edu:/mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_data/MRF_senesc* /projects/p290555/p290555/project_bean/MRF_senesc/
+
+rsync -azv k0107955@hpcc.msu.edu:/mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_data/MRF_pod* /projects/p290555/p290555/project_bean/MRF_pod/
+
+######## analysis ########
+
+
+# environment creation
+
+conda create --prefix /scratch/p290555/Envs/metagenome_env
+
+
+
+# data clean up; the adapters were removed already
+
+cp /projects/p290555/p290555/project_bean/MRF_V2* /scratch/p290555/Bean_msu/MRF_V2/
+
+
+
+
+
+# Data has been assembled and genes have been predicted. 
+
+cd /mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_project/
+
+
+wc -l gene.TPM  # >>  5638426 genes
+
+awk '{print NF; exit}' gene.TPM   # >>  27 samples
+
+
+# make a metadata 
+awk 'NR==1 {for (i=2; i<=NF; i++) print $i}' gene.TPM > metadata.txt
+
+awk 'NR==1 {print $0, "Group"} NR>1 {split($1, arr, "_"); print $0, arr[1]"_"arr[2]}' metadata.txt > metadata_grouped.txt
+
+# The plan for the downstream analysis is:
+# (1) calculate Shannon index for genes at each stage 
+# (2) annotate the functions for all genes
+# (3) 
+# 
+
+
+# (1) calculate Shannon index for genes at each stage
+awk '
+NR==1 {
+    print "Sample\tShannon_Index" > "gene_shannon.txt";
+    for (i=2; i<=NF; i++) samples[i]=$i
+} 
+NR>1 {
+    for (i=2; i<=NF; i++) abundance[i] += $i
+    for (i=2; i<=NF; i++) count[i, NR] = $i
+} 
+END {
+    for (i=2; i<=NF; i++) {
+        H = 0;
+        for (j=2; j<=NR; j++) {
+            if (count[i, j] > 0) {
+                p = count[i, j] / abundance[i];
+                H -= p * log(p);  # Shannon index
+            }
+        }
+        print samples[i] "\t" H > "gene_shannon.txt";
+    }
+}' gene.TPM
+
+
+
+# (2) annotate the functions for all genes with eggnog-mapper 
+
+cd /mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_project/data_process/gene_predicted_all/
+
+seqkit translate clusterRes_rep_seq.fasta -T 11 -x -j 10 -o protein_rep_seq.fasta
+
+conda install -c bioconda eggnog-mapper
+
+export EGGNOG_DATA_DIR=/mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/database/eggnog-mapper-data/
+
+download_eggnog_data.py -F
+
+
+
+cd /mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_project/data_process/gene_predicted_all/KEGG/
+
+# Homology searches
+## Split your input FASTA file into chunks
+seqkit split -i -p 20 protein_rep_seq.fasta -O /mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_project/data_process/gene_predicted_all/KEGG/
+
+#for f in *.part_*.fasta; do
+#emapper.py -m diamond --no_annot --no_file_comments --cpu 60 -i $f -o $f
+#echo "Done with $f"
+#done
+
+cat *.part_*.emapper.seed_orthologs > input.emapper.seed_orthologs
+
+# Orthology and functional annotation
+export EGGNOG_DATA_DIR=/mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/database/eggnog-mapper-data/
+
+emapper.py --annotate_hits_table input.emapper.seed_orthologs -o all.gene --cpu 60 --usemem
+
+
+# stat the unique groups in each column 
+
+awk -F "\t" '{print $7}' all.gene.emapper.annotations | sort | uniq > unique_COG_category.txt
+
+awk -F "\t" '{print $10}' all.gene.emapper.annotations | sort | uniq > unique_GOs.txt
+
+awk -F "\t" '{print $12}' all.gene.emapper.annotations | sort | uniq > unique_KEGG_ko.txt
+
+awk -F "\t" '{print $19}' all.gene.emapper.annotations | sort | uniq > unique_CAZy.txt
+
+
+# filter the annotation results by using e-value ≤ 1e-5
+sed -n '5p' all.gene.emapper.annotations > filtered_eggnog_annotations.txt
+
+awk -F'\t' '$3 <= 1e-5' all.gene.emapper.annotations | tail -n +5 >> filtered_eggnog_annotations.txt
+
+
+
+# count the number of genes that have been annotated by COG, KEGG, or CAZy.
+awk -F'\t' 'NR>4 && ($7 != "-" || $12 != "-" || $19 != "-") {count++} END {print "Annotated genes:", count}' filtered_eggnog_annotations.txt
+
+awk -F'\t' 'NR>4 {if ($12 != "-") kegg++; if ($19 != "-") cazy++; if ($7 != "-") cog++} END {print "KEGG:", kegg, "CAZy:", cazy, "COG:", cog}' filtered_eggnog_annotations.txt
+
+### Annotated genes: 4217656 in total number of 5638425 genes, after the filtering
+KEGG: 2434448 CAZy: 72629 COG: 4213091
+
+
+awk -F'\t' 'NR<=10 {print $19}' filtered_eggnog_annotations.txt
+
+
+
+
+# extract the first KO or CAZy classification; the last two columns are KEGG_ko_first and CAZy_first
+awk -F "\t" 'BEGIN {OFS="\t"} 
+{
+    if (NR == 1) {print $0, "KEGG_ko_first", "CAZy_first"; next}  # 添加新列名
+    split($12, ko_arr, ","); 
+    split($19, cazy_arr, ",");
+    print $0, (ko_arr[1] ? ko_arr[1] : ""), (cazy_arr[1] ? cazy_arr[1] : ""); 
+}' filtered_eggnog_annotations.txt > filtered_eggnog_annotations_new.txt
+
+awk -F'\t' 'NR<=10 {print $22}' filtered_eggnog_annotations_new.txt
+
+
+
+
+# merge gene annotation and abundance results; the column 1 is gene_id. 2-28 are abundacne, the column 29 is gene_id, 30-51 are annotation info.
+
+head -n 1 /mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_project/data_process/gene_predicted_all/salmon/gene.TPM > new_header.txt
+head -n 1 filtered_eggnog_annotations_new.txt >> new_header.txt
+
+awk -F'\t' 'NR<=10 {print $49}' new_header.txt
+
+
+awk 'BEGIN {FS=OFS="\t"} NR==FNR {a[$1]=$0; next} $1 in a {print a[$1], $0}' /mnt/ufs18/rs-033/ShadeLab/WorkingSpace/Xipeng/bean_project/data_process/gene_predicted_all/salmon/gene.TPM filtered_eggnog_annotations_new.txt > merged_result_annotation_abundance.txt
+
+cat new_header.txt merged_result_annotation_abundance.txt > merged_result_annotation_abundance_new.txt
+
+awk -F'\t' 'NR<=10 {print $50}' merged_result_annotation_abundance_new.txt
+
+
+
+
+
+# filter the genes annotated by KO / COG / CAZy
+# print and use tab as delimiter
+awk -F'\t' 'NR==1 || $(NF-1) != "-" {OFS="\t"; print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$50}' merged_result_annotation_abundance_new.txt > KEGG_ko_gene_abundance.txt
+
+awk -F'\t' 'NR==1 || $(NF) != "-" {OFS="\t"; print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$51}' merged_result_annotation_abundance_new.txt > CAZy_gene_abundance.txt
+
+awk -F'\t' 'NR==1 || $(NF-16) != "-" {OFS="\t"; print $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$35}' merged_result_annotation_abundance_new.txt > COG_gene_abundance.txt
+
+
+
+
+# Abundance aggregate; CAZy_first; KEGG_ko_first; COG_category
+import pandas as pd
+
+# read data
+file_path = "CAZy_gene_abundance.txt"
+df = pd.read_csv(file_path, sep='\t')
+
+# delete the rows with empty value of KEGG_ko_first
+df = df[df['CAZy_first'] != '-']
+
+# define the abundance columns
+columns_to_sum = df.columns[1:-1]  # remove Name and KEGG_ko_first
+
+kegg_grouped = df.groupby('CAZy_first')[columns_to_sum].sum()
+
+# output
+output_path = "CAZy_first_grouped_abundance.txt"
+kegg_grouped.to_csv(output_path, sep='\t')
+
+print(f"results saved to {output_path}")
+
+
+# extract COG code
+awk -F"\t" '{split($33, a, "@"); print $1 "\t" a[1]}' merged_result_annotation_abundance_new.txt > COG_gene_map.txt
+
+awk -F"\t" '$2 ~ /COG/ {print $0}' COG_gene_map.txt > COG_gene_map_filtered.txt
+
+# Soft clustering of genes across time
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
