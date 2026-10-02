@@ -1,0 +1,167 @@
+#Random Forest analysis using bacterial ASVs as predictors of plant developmental stage
+
+library(phyloseq)
+library(caret)
+library(randomForest)
+
+setwd("~/Documents/Labo/Projets/2024_Bean_Abby")
+OTU_table<-read.table("bean_assembly_ASVtable.csv", header = T, sep=",", row.names=1)
+OTU_table <-as.matrix(OTU_table)
+OTU = otu_table(OTU_table, taxa_are_rows = TRUE)
+
+taxa_table<-read.table("bean_assembly_taxtable.csv", header = T, sep=",", row.names=1)
+taxa_table <-as.matrix(taxa_table)
+TAX = phyloseq::tax_table(taxa_table)
+
+sample_data<-read.table("metadata_14oct2024_2.csv", header = T, sep=";", row.names=1)
+sampledata = sample_data(data.frame(sample_data, stringsAsFactors=FALSE))
+physeq <- phyloseq(OTU, TAX, sampledata)
+
+#Transform data (log10 rel. abu. + 1)
+
+physeq_ra<-transform_sample_counts(physeq, function(x) 1+(x/sum(x)) )
+physeq_ra_log<-transform_sample_counts(physeq_ra, log10)
+
+
+###########Random Forest on Rhizoplane samples
+##############################################
+
+#get only Rhizoplane samples
+physeq_rf<-subset_samples(physeq_ra_log, compartment=="rhizoplane")
+
+#check number of samples/OTUs
+ncol(otu_table(physeq_rf, taxa_are_rows = T))
+#133 samples
+nrow(otu_table(physeq_rf, taxa_are_rows = T))
+#113737 OTUs
+
+#Filter OTU table to mean OTU abundance > 10-5 (log10(1+1e-5)=4e-5)
+physeq_rf1<-filter_taxa(physeq_rf, function(x) mean(x) > 4e-5, TRUE)
+ncol(otu_table(physeq_rf1, taxa_are_rows = T))
+nrow(otu_table(physeq_rf1, taxa_are_rows = T))
+
+#133 samples, 749 retained OTUS 
+
+otu_rf <- as.data.frame(otu_table(physeq_rf1))
+taxa_rf <- as.data.frame(phyloseq::tax_table(physeq_rf1))
+sampledata_rf <- as.data.frame(phyloseq::sample_data(physeq_rf1))
+otu_rf_2<-as.data.frame(t(otu_rf))
+
+### Method 1: RF with RF package
+
+set.seed(123)
+rf_out<-randomForest(x=otu_rf_2, y=as.factor(sampledata_rf$growthstage_aggregate),ntree=300, importance=T, mtry=215)
+rf_out
+plot(rf_out)
+#Error rate = 30.08 %
+#mtry optimised with caret 70%-30% train-test data
+#Use the confusion matrix for figure
+
+
+## Method 2: Random forest optimisation/train/test with Caret
+
+##Bind OTU and growth stage labels
+otu_rf_3<-cbind(growthstage_aggregate=sampledata_rf$growthstage_aggregate_categorical, otu_rf_2)
+
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training and testing sets
+trainIndex <- createDataPartition(otu_rf_3$growthstage_aggregate, p = 0.5, list = FALSE)
+trainData <- otu_rf_3[trainIndex, ]
+testData <- otu_rf_3[-trainIndex, ]
+
+
+# Define the training control
+trainControl <- trainControl(method = "cv", number = 5)
+
+# Train the Random Forest model
+rfModel <- train(growthstage_aggregate ~ ., data = trainData, method = "rf", trControl = trainControl, tuneLength=20)
+
+# Print the model
+print(rfModel)
+#mtry=45
+
+##### Testing the model
+
+# Predict on the test data
+predictions <- predict(rfModel, newdata = testData)
+
+# Generate the confusion matrix
+confusionMatrix(predictions, as.factor(testData$growthstage_aggregate))
+#Sensitivity used for figure
+
+
+
+
+###########Random Forest on Rhizosphere samples
+##############################################
+
+#get only Rhizoplane samples
+physeq_rf<-subset_samples(physeq_ra_log, compartment=="rhizosphere")
+
+#check number of samples/OTUs
+ncol(otu_table(physeq_rf, taxa_are_rows = T))
+#136 samples
+nrow(otu_table(physeq_rf, taxa_are_rows = T))
+#113737 OTUs
+
+
+#Filter OTU table to mean OTU abundance > 10-5 (log10(1+1e-5)=4e-5)
+physeq_rf1<-filter_taxa(physeq_rf, function(x) mean(x) > 4e-5, TRUE)
+ncol(otu_table(physeq_rf1, taxa_are_rows = T))
+nrow(otu_table(physeq_rf1, taxa_are_rows = T))
+
+#136 samples, 1133 retained OTUS 
+
+otu_rf <- as.data.frame(otu_table(physeq_rf1))
+taxa_rf <- as.data.frame(phyloseq::tax_table(physeq_rf1))
+sampledata_rf <- as.data.frame(phyloseq::sample_data(physeq_rf1))
+otu_rf_2<-as.data.frame(t(otu_rf))
+
+
+### Method 1: RF with RF package
+
+set.seed(123)
+rf_out<-randomForest(x=otu_rf_2, y=as.factor(sampledata_rf$growthstage_aggregate),ntree=300, importance=T, mtry=53)
+rf_out
+#Error rate = 34 %
+#mtry optimised with caret 70%-30% train-test data
+#Use the confusion matrix for figure
+
+
+## Method 2: Random forest optimisation/train/test with Caret
+
+##Bind OTU and growth stage labels
+otu_rf_3<-cbind(growthstage_aggregate=sampledata_rf$growthstage_aggregate_categorical, otu_rf_2)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Split data into training and testing sets (70% - 30%)
+trainIndex <- createDataPartition(otu_rf_3$growthstage_aggregate, p = 0.5, list = FALSE)
+trainData <- otu_rf_3[trainIndex, ]
+testData <- otu_rf_3[-trainIndex, ]
+
+
+# Define the training control
+trainControl <- trainControl(method = "cv", number = 5)
+
+# Train the Random Forest model on the train data
+rfModel <- train(growthstage_aggregate ~ ., data = trainData, method = "rf", trControl = trainControl, tuneLength=20)
+
+# Print the model
+print(rfModel)
+mtry = 581
+
+##### Testing the trained model on test data
+
+# Predict on the test data
+predictions <- predict(rfModel, newdata = testData)
+
+# Generate the confusion matrix
+confusionMatrix(predictions, as.factor(testData$growthstage_aggregate))
+#Sensitivity used for figure
+
+
