@@ -1,0 +1,1743 @@
+# Bean trajectory analysis under Zeb treatment, 16s and ITS component
+
+#### Ludivine Guigard
+# based on Samuel Barnett's script
+## Loading libraries and main variables
+```{r}      
+# Libraries for data handling 
+library(dplyr) 
+library(phyloseq) 
+library(decontam)
+# Install from GitHub
+#if (!requireNamespace("remotes", quietly = TRUE)){
+#  install.packages("remotes")
+#}
+#remotes::install_github("vmikk/metagMisc")
+library(metagMisc)  
+
+# Libraries for analysis 
+library(vegan) 
+library(ape) 
+library(ecotraj) 
+library(FSA)
+library(rcompanion)
+
+# Libraries for plotting 
+library(ggplot2)  
+library(cowplot)
+
+# Function for extracting legends 
+g_legend<-function(a.gplot){   
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))   
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")   
+  legend <- tmp$grobs[[leg]]   
+  return(legend)} 
+
+# Basic plotting theme so as not to continually repeat it 
+publication_theme = theme_bw() +   
+  theme(axis.text = element_text(size=6),         
+        axis.title = element_text(size=7),         
+        legend.text = element_text(size=6),         
+        legend.title = element_text(size=7, hjust=0.5),         
+        strip.text = element_text(size=7),         
+        plot.title = element_text(size=8, hjust=0.5))  
+
+present_theme = theme_bw() +   
+  theme(axis.text = element_text(size=10),         
+        axis.title = element_text(size=12),        
+        legend.text = element_text(size=10),         
+        legend.title = element_text(size=12, hjust=0.5),         
+        strip.text = element_text(size=10),         
+        plot.title = element_text(size=14, hjust=0.5))
+```
+
+## Loading data
+
+The rarefied data is found in a phyloseq object. Lets take that then divide it into the separate time series and growth stage series.
+
+```{r} 
+getwd()
+ITS_physeq = readRDS("RA_combined_final.rds")
+#View(sample_data(ITS_physeq))
+Bac_physeq = readRDS("RA_SAM_16S.rds")
+#View(sample_data(Bac_physeq))
+
+ITS_time.rare.physeq = subset_samples(ITS_physeq, series == "time") 
+ITS_stage.rare.physeq = subset_samples(ITS_physeq, series == "growth") 
+
+Bac_time.rare.physeq = subset_samples(Bac_physeq, series == "time") 
+Bac_stage.rare.physeq = subset_samples(Bac_physeq, series == "growth") 
+```
+# Time series based analysis
+
+First lets run the trajectory analysis on the time series analysis. We are looking here to see if there are differences in zeb treated and untreated plants and compartment.
+
+## PERMANOVA and Ordination
+
+First run a PERMANOVA to see which factors explain the variation in community composition.
+
+```{r}         
+#ITS
+perm <- how(nperm = 999) 
+
+ITS_dat.time = data.frame(sample_data(ITS_time.rare.physeq))  
+# Get the Bray-Curtis dissimilarity 
+ITS_otu.time <- as(otu_table(ITS_time.rare.physeq), "matrix")
+ITS_time.BC.dist = vegdist(ITS_otu.time, method = "bray", binary = FALSE, diag = TRUE, upper=TRUE)
+
+# Run adonis2  
+set.seed(4242) 
+ITS_time.BC.adonis = adonis2(formula = ITS_time.BC.dist ~ treatment*age_days*compartment,
+                         permutations = perm, data = ITS_dat.time, by="terms") 
+ITS_time.BC.adonis
+```
+```{r}         
+#16S
+perm <- how(nperm = 999)
+Bac_dat = data.frame(sample_data(Bac_time.rare.physeq))
+
+# Get the Bray-Curtis dissimilarity
+Bac_time.BC.dist = vegdist(t(otu_table(Bac_time.rare.physeq)), method="bray", binary=FALSE, diag=TRUE, upper=TRUE)
+
+# Run adonis2 
+set.seed(4242)
+Bac_time.BC.adonis = adonis2(formula = Bac_time.BC.dist ~ group*stage*compartment, 
+                    permutations = perm, data = Bac_dat, by="terms")
+Bac_time.BC.adonis
+```
+As expected, compartment is the primary variable explaining variation in community composition, however development (age_days) and treatment (Zeb treatment) are too. Notably, there are significant interactions as well. Treatment interacts with time (age_days) and time and compartment together, but each explain more variation in composition when taken alone than grouped.
+If we select harvestDay instead of age_days, more variability gets explained.
+
+Lets visualize this a bit with ordinations
+
+```{r}         
+# Get the PCoA based on Bray-Curtis 
+set.seed(4242) 
+ITS_time.BC.PCoA = pcoa(ITS_time.BC.dist)  
+
+# Get the axes labels 
+ITS_time.BC.PCoA.Xaxis = paste("PCo1 (", round(ITS_time.BC.PCoA$values[1,2]*100, digits=2), "%)", sep="")
+ITS_time.BC.PCoA.Yaxis = paste("PCo2 (", round(ITS_time.BC.PCoA$values[2,2]*100, digits=2), "%)", sep="")  
+# Convert the PCoA points into a dataframe and add back in the metadata
+ITS_time.BC.PCoA.df = data.frame(ITS_time.BC.PCoA$vectors) %>%
+  tibble::rownames_to_column(var="SampleID") %>%   
+  select(SampleID, Axis.1, Axis.2) %>%
+  left_join(data.frame(sample_data(ITS_time.rare.physeq)),              
+            by = "SampleID") %>%   
+  mutate(day = factor(gsub("day", "", age_days), 
+                      levels=c("3", "7", "14", "21", "35", "49", "63"))) 
+# PCoA Plot 
+ITS_time.BC_PCoA.plot = ggplot(data=ITS_time.BC.PCoA.df, aes(x=Axis.1, y=Axis.2)) + 
+  geom_point(aes(fill=treatment, color=treatment, shape=compartment, alpha=day), size=3) +   geom_point(aes(color=treatment, shape=compartment), size=3) +  
+  scale_shape_manual(values=c(21, 24)) +   
+  scale_fill_manual(values=c("Control" = "black", "Zeb" = "purple")) +  
+  scale_color_manual(values=c("Control" = "black", "Zeb" = "purple")) + 
+  labs(x=ITS_time.BC.PCoA.Xaxis, y=ITS_time.BC.PCoA.Yaxis) +   
+  present_theme
+ITS_time.BC_PCoA.plot     
+```
+```{r}         
+# Get the PCoA based on Bray-Curtis
+set.seed(4242)
+Bac_time.BC.PCoA = pcoa(Bac_time.BC.dist)
+
+# Get the axes labels
+Bac_time.BC.PCoA.Xaxis = paste("PCo1 (", round(Bac_time.BC.PCoA$values[1,2]*100, digits=2), "%)", sep="")
+Bac_time.BC.PCoA.Yaxis = paste("PCo2 (", round(Bac_time.BC.PCoA$values[2,2]*100, digits=2), "%)", sep="")
+
+# Convert the PCoA points into a dataframe and add back in the metadata
+Bac_time.BC.PCoA.df = data.frame(Bac_time.BC.PCoA$vectors) %>%
+  tibble::rownames_to_column(var="SampleID") %>%
+  select(SampleID, Axis.1, Axis.2) %>%
+  left_join(data.frame(sample_data(Bac_time.rare.physeq)), 
+            by = "SampleID") %>%
+  mutate(day = factor(gsub("day", "", stage), levels=c("3", "7", "14", "21", "35", "49", "63")))
+
+# PCoA Plot
+Bac_time.BC_PCoA.plot = ggplot(data=Bac_time.BC.PCoA.df, aes(x=Axis.1, y=Axis.2)) +
+  geom_point(aes(fill=group, color=group, shape=compartment, alpha=day), size=3) +
+  geom_point(aes(color=group, shape=compartment), size=3) +
+  scale_shape_manual(values=c(21, 24)) +
+  scale_fill_manual(values=c("Control" = "black", "Zeb" = "purple")) +
+  scale_color_manual(values=c("Control" = "black", "Zeb" = "purple")) +
+  labs(x=Bac_time.BC.PCoA.Xaxis, y=Bac_time.BC.PCoA.Yaxis) +
+  present_theme
+
+Bac_time.BC_PCoA.plot    
+```
+
+## Trajectory analysis
+
+Now lets run the trajectory analysis. Since we aren’t following the exact same samples over time, lets try this using a permutative method where we randomly select replicates for each timepoint and run this sampling 100 times and repeat the same analysis for each group.
+
+```{r} 
+#Bac
+nperm = 100
+Bac_time.traj.direct.df = data.frame()
+for (i in seq(1:nperm)){
+  set.seed(i+42)
+  Iter.meta = data.frame(sample_data(Bac_time.rare.physeq)) %>%
+    select(SampleID, group, series, stage, plant_rep, compartment) %>%
+    mutate(Stage_num = as.numeric(gsub("day", "", stage))) %>%
+    group_by(group, series, stage, compartment) %>%
+    sample_n(1) %>%
+    ungroup %>%
+    mutate(PlantID = paste(group, compartment, series, "Iteration", i, sep="_")) %>%
+    arrange(PlantID, Stage_num)
+  
+  D = as.matrix(Bac_time.BC.dist)
+  D = D[Iter.meta$SampleID, Iter.meta$SampleID] %>%
+    as.dist()
+  Plants = Iter.meta$PlantID
+  Timepoints = Iter.meta$Stage_num
+  
+  # Trajectory directionality
+  PlantID.traj <- defineTrajectories(D, Plants, Timepoints)
+
+  iter.traj.direct.df = trajectoryMetrics(PlantID.traj) %>%
+    rename(PlantID = trajectory) %>%
+    left_join(Iter.meta %>%
+                select(PlantID, group, series, compartment) %>%
+                unique, 
+              by = "PlantID") %>%
+    mutate(Iteration = i)
+  Bac_time.traj.direct.df = rbind(Bac_time.traj.direct.df, iter.traj.direct.df)
+}
+```
+
+```{r}  
+#ITS
+# Run the trajectory analysis for permutative sampling of replicates per timepoint.
+nperm = 100 
+ITS_time.traj.direct.df = data.frame() 
+for (i in seq(1:nperm)){   
+  set.seed(i+42)   
+  Iter.meta = data.frame(sample_data(ITS_time.rare.physeq)) %>%     
+    select(SampleID, treatment, series, age_days, plant_rep, compartment) %>%
+    mutate(Stage_num = as.numeric(age_days)) %>%     
+    group_by(treatment, series, age_days, compartment) %>%     
+    sample_n(1) %>%     
+    ungroup %>%     
+    mutate(PlantID = paste(treatment, compartment, series, "Iteration", i, sep="_")) %>%     
+    arrange(PlantID, Stage_num)      
+  
+  D = as.matrix(ITS_time.BC.dist)   
+  D = D[Iter.meta$SampleID, Iter.meta$SampleID] %>%     
+    as.dist()   
+  Plants = Iter.meta$PlantID   
+  Timepoints = Iter.meta$Stage_num      
+  
+  # Trajectory directionality   
+  PlantID.traj <- defineTrajectories(D, Plants, Timepoints)    
+  iter.traj.direct.df = trajectoryMetrics(PlantID.traj) %>%     
+    dplyr::rename(PlantID = trajectory) %>%     
+    left_join(Iter.meta %>%                 
+                select(PlantID, treatment, series, compartment) %>%               
+                unique,                
+              by = "PlantID") %>%     
+    mutate(Iteration = i)   
+  ITS_time.traj.direct.df = rbind(ITS_time.traj.direct.df, iter.traj.direct.df) 
+}
+```
+
+First lets take a look at these trajectories across plant compartment within each treatment.
+
+```{r}
+# Directionality
+Bac_time.comp_dir.wilcox.df = data.frame()
+for (grp in c("Control", "Zeb")){
+  comp_dir.wilcox = wilcox.test(x=filter(Bac_time.traj.direct.df, group==grp, compartment=="rhizoplane")$directionality,
+                                y=filter(Bac_time.traj.direct.df, group==grp, compartment=="rhizosphere")$directionality,
+                                conf.int=TRUE, conf.level=0.95)
+  Bac_time.comp_dir.wilcox.df = rbind(Bac_time.comp_dir.wilcox.df, 
+                             data.frame(group = grp,
+                                        ymax = max(filter(Bac_time.traj.direct.df, group==grp)$directionality),
+                                        pvalue = comp_dir.wilcox$p.value,
+                                        W = comp_dir.wilcox$statistic,
+                                        diff = comp_dir.wilcox$estimate))
+}
+
+Bac_time.comp_dir.wilcox.df = Bac_time.comp_dir.wilcox.df %>%
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",
+                      paste("p =", round(pvalue, digits = 3))))
+
+Bac_time.comp_dir.plot = ggplot(data=Bac_time.traj.direct.df, aes(x=compartment, y=directionality)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height=0, width=0.25, size=2) +
+  geom_text(data=Bac_time.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Directionality") +
+  present_theme +
+  facet_wrap(~group, nrow=1)
+
+Bac_time.comp_dir.plot
+
+#Collapsing both control and Zeb-treated samples: Directionality
+Bac_coll_time.comp_dir.wilcox.df = data.frame()
+Bac_coll_comp_dir.wilcox = wilcox.test(
+  x=filter(Bac_time.traj.direct.df, compartment=="rhizoplane")$directionality,
+  y=filter(Bac_time.traj.direct.df, compartment=="rhizosphere")$directionality,
+  conf.int=TRUE, conf.level=0.95)  
+
+Bac_coll_time.comp_dir.wilcox.df = rbind(Bac_coll_time.comp_dir.wilcox.df,
+                                 data.frame(ymax = max(Bac_time.traj.direct.df$directionality),
+                                            pvalue = Bac_coll_comp_dir.wilcox$p.value,
+                                            W = Bac_coll_comp_dir.wilcox$statistic,
+                                            diff = Bac_coll_comp_dir.wilcox$estimate)) 
+
+Bac_coll_time.comp_dir.wilcox.df = Bac_coll_time.comp_dir.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+Bac_coll_time.comp_dir.plot = ggplot(data=Bac_time.traj.direct.df, 
+                             aes(x=compartment, y=directionality)) +
+  geom_boxplot(outlier.shape = NA, fill = c("#E6F9FF","#FFECE6")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=Bac_coll_time.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Directionality") +   
+  present_theme 
+
+Bac_coll_time.comp_dir.plot
+ggsave("Directionality_Collapsed_Time_16S.png", Bac_coll_time.comp_dir.plot)
+```
+
+```{r}    
+#ITS
+# Directionality 
+ITS_time.comp_dir.wilcox.df = data.frame() 
+for (grp in c("Control", "Zeb")){   
+  comp_dir.wilcox = wilcox.test(
+    x=filter(ITS_time.traj.direct.df, treatment==grp, compartment=="rhizoplane")$directionality,                              
+    y=filter(ITS_time.traj.direct.df, treatment==grp, compartment=="rhizosphere")$directionality,
+    conf.int=TRUE, conf.level=0.95)   
+  ITS_time.comp_dir.wilcox.df = rbind(ITS_time.comp_dir.wilcox.df,          
+                                  data.frame(treatment = grp,
+                                             ymax = max(filter(ITS_time.traj.direct.df, treatment==grp)$directionality),                                        
+                                             pvalue = comp_dir.wilcox$p.value,
+                                             W = comp_dir.wilcox$statistic,
+                                             diff = comp_dir.wilcox$estimate)) 
+  }  
+
+ITS_time.comp_dir.wilcox.df = ITS_time.comp_dir.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_time.comp_dir.plot = ggplot(data=ITS_time.traj.direct.df, 
+                            aes(x=compartment, y=directionality)) +   
+  geom_boxplot(outlier.shape = NA) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_time.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Directionality") +   
+  present_theme +   
+  facet_wrap(~treatment, nrow=1)  
+
+ITS_time.comp_dir.plot
+
+#Collapsing both control and Zeb-treated samples: Directionality
+ITS_coll_time.comp_dir.wilcox.df = data.frame()
+ITS_coll_comp_dir.wilcox = wilcox.test(
+  x=filter(ITS_time.traj.direct.df, compartment=="rhizoplane")$directionality,
+  y=filter(ITS_time.traj.direct.df, compartment=="rhizosphere")$directionality,
+  conf.int=TRUE, conf.level=0.95)  
+
+ITS_coll_time.comp_dir.wilcox.df = rbind(ITS_coll_time.comp_dir.wilcox.df,
+                                 data.frame(ymax = max(ITS_time.traj.direct.df$directionality),
+                                            pvalue = ITS_coll_comp_dir.wilcox$p.value,
+                                            W = ITS_coll_comp_dir.wilcox$statistic,
+                                            diff = ITS_coll_comp_dir.wilcox$estimate)) 
+
+ITS_coll_time.comp_dir.wilcox.df = ITS_coll_time.comp_dir.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_coll_time.comp_dir.plot = ggplot(data=ITS_time.traj.direct.df, 
+                             aes(x=compartment, y=directionality)) +
+  geom_boxplot(outlier.shape = NA, fill = c("#E6F9FF","#FFECE6")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_coll_time.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Directionality") +   
+  present_theme 
+
+ITS_coll_time.comp_dir.plot
+ggsave("Directionality_Collapsed_Time_ITS.png", ITS_coll_time.comp_dir.plot)
+```
+```{r}
+# Length 
+  #16S
+Bac_time.comp_len.wilcox.df = data.frame()
+for (grp in c("Control", "Zeb")){
+  comp_len.wilcox = wilcox.test(x=filter(Bac_time.traj.direct.df, group==grp, compartment=="rhizoplane")$length,
+                                y=filter(Bac_time.traj.direct.df, group==grp, compartment=="rhizosphere")$length,
+                                conf.int=TRUE, conf.level=0.95)
+  Bac_time.comp_len.wilcox.df = rbind(Bac_time.comp_len.wilcox.df, 
+                             data.frame(group = grp,
+                                        ymax = max(filter(Bac_time.traj.direct.df, group==grp)$length),
+                                        pvalue = comp_len.wilcox$p.value,
+                                        W = comp_len.wilcox$statistic,
+                                        diff = comp_len.wilcox$estimate))
+}
+
+Bac_time.comp_len.wilcox.df = Bac_time.comp_len.wilcox.df %>%
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",
+                      paste("p =", round(pvalue, digits = 3))))
+
+Bac_time.comp_len.plot = ggplot(data=Bac_time.traj.direct.df, aes(x=compartment, y=length)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height=0, width=0.25, size=2) +
+  geom_text(data=Bac_time.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Trajectory length") +
+  present_theme +
+  facet_wrap(~group, nrow=1)
+
+Bac_time.comp_len.plot
+
+#Collapsing both control and Zeb-treated samples: Length
+Bac_coll_time.comp_len.wilcox.df = data.frame() 
+Bac_coll_comp_len.wilcox = wilcox.test(x=filter(Bac_time.traj.direct.df, compartment=="rhizoplane")$length,
+                              y=filter(Bac_time.traj.direct.df, compartment=="rhizosphere")$length, 
+                              conf.int=TRUE, conf.level=0.95)   
+
+Bac_coll_time.comp_len.wilcox.df = rbind(Bac_coll_time.comp_len.wilcox.df,
+                                data.frame(ymax = max(Bac_time.traj.direct.df$length),
+                                           pvalue = Bac_coll_comp_len.wilcox$p.value,
+                                           W = Bac_coll_comp_len.wilcox$statistic,
+                                           diff = Bac_coll_comp_len.wilcox$estimate)) 
+
+Bac_coll_time.comp_len.wilcox.df = Bac_coll_time.comp_len.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+Bac_coll_time.comp_len.plot = ggplot(data=Bac_time.traj.direct.df, aes(x=compartment, y=length)) +
+  geom_boxplot(outlier.shape = NA, fill = c("#E6F9FF","#FFECE6")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=Bac_coll_time.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Trajectory length") +   
+  present_theme 
+Bac_coll_time.comp_len.plot
+ggsave("Length_Collapsed_Time_16S.png", Bac_coll_time.comp_len.plot)
+```
+```{r}  
+# Length 
+  #ITS
+ITS_time.comp_len.wilcox.df = data.frame() 
+for (grp in c("Control", "Zeb")){   
+  comp_len.wilcox = wilcox.test(x=filter(ITS_time.traj.direct.df, treatment==grp,
+                                         compartment=="rhizoplane")$length,                                 
+                                y=filter(ITS_time.traj.direct.df, treatment==grp, compartment=="rhizosphere")$length,                                 
+                                conf.int=TRUE, conf.level=0.95)   
+  ITS_time.comp_len.wilcox.df = rbind(ITS_time.comp_len.wilcox.df,                        
+                                  data.frame(treatment = grp,                       
+                                             ymax = max(filter(ITS_time.traj.direct.df, treatment==grp)$length),                        
+                                             pvalue = comp_len.wilcox$p.value,
+                                             W = comp_len.wilcox$statistic,
+                                             diff = comp_len.wilcox$estimate)) 
+  }  
+
+ITS_time.comp_len.wilcox.df = ITS_time.comp_len.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_time.comp_len.plot = ggplot(data=ITS_time.traj.direct.df, aes(x=compartment, y=length)) +
+  geom_boxplot(outlier.shape = NA) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_time.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Trajectory length") +   
+  present_theme +   
+  facet_wrap(~treatment, nrow=1)  
+
+ITS_time.comp_len.plot
+
+#Collapsing both control and Zeb-treated samples: Directionality
+ITS_coll_time.comp_len.wilcox.df = data.frame() 
+ITS_coll_comp_len.wilcox = wilcox.test(x=filter(ITS_time.traj.direct.df, compartment=="rhizoplane")$length,
+                              y=filter(ITS_time.traj.direct.df, compartment=="rhizosphere")$length, 
+                              conf.int=TRUE, conf.level=0.95)   
+
+ITS_coll_time.comp_len.wilcox.df = rbind(ITS_coll_time.comp_len.wilcox.df,
+                                data.frame(ymax = max(ITS_time.traj.direct.df$length),
+                                           pvalue = ITS_coll_comp_len.wilcox$p.value,
+                                           W = ITS_coll_comp_len.wilcox$statistic,
+                                           diff = ITS_coll_comp_len.wilcox$estimate)) 
+
+ITS_coll_time.comp_len.wilcox.df = ITS_coll_time.comp_len.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_coll_time.comp_len.plot = ggplot(data=ITS_time.traj.direct.df, aes(x=compartment, y=length)) +
+  geom_boxplot(outlier.shape = NA, fill = c("#E6F9FF","#FFECE6")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_coll_time.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Trajectory length") +   
+  present_theme 
+ITS_coll_time.comp_len.plot
+ggsave("Length_Collapsed_Time_ITS.png", ITS_coll_time.comp_len.plot)
+```
+
+Rhizoplane has significantly more directionality and trajectory length than rhizosphere regardless of the treatment.
+
+# Stage based analysis
+
+Now lets run the trajectory analysis on the stage series analysis. We are looking here to see if there are differences in zeb treated and untreated plants and compartment.
+
+## PERMANOVA and Ordination
+
+First run a PERMANOVA to see which factors explain the variation in community composition.
+
+```{r}         
+perm <- how(nperm = 999) 
+dat = data.frame(sample_data(ITS_stage.rare.physeq))  
+
+# Get the Bray-Curtis dissimilarity 
+ITS_otu.stage <- as(otu_table(ITS_stage.rare.physeq), "matrix")
+ITS_stage.BC.dist = vegdist(ITS_otu.stage, method = "bray", binary = FALSE, diag = TRUE, upper=TRUE)
+
+# Run adonis2  
+set.seed(4242) 
+ITS_stage.BC.adonis = adonis2(formula = ITS_stage.BC.dist ~ treatment*Development*compartment,
+                          permutations = perm, data = dat, by="terms") 
+ITS_stage.BC.adonis
+
+perm <- how(nperm = 999)
+Bac_dat = data.frame(sample_data(Bac_stage.rare.physeq))
+
+# Get the Bray-Curtis dissimilarity
+Bac_stage.BC.dist = vegdist(t(otu_table(Bac_stage.rare.physeq)), method="bray", binary=FALSE, diag=TRUE, upper=TRUE)
+
+# Run adonis2 
+set.seed(4242)
+Bac_stage.BC.adonis = adonis2(formula = Bac_stage.BC.dist ~ group*stage*compartment, 
+                    permutations = perm, data = Bac_dat, by="terms")
+Bac_stage.BC.adonis
+```
+
+As expected, compartment is the primary variable explaining variation in community composition, however stage (development) and group (treatment) are too. We also have the same two interactions in here. This also makes sense since Zeb delays the stages so we might expect more interactions between group and time than group and stage.
+
+Lets visualize this a bit with ordinations
+
+```{r}         
+# Get the PCoA based on Bray-Curtis 
+set.seed(4242) 
+ITS_stage.BC.PCoA = pcoa(ITS_stage.BC.dist)  
+
+# Get the axes labels 
+ITS_stage.BC.PCoA.Xaxis = paste("PCo1 (", round(ITS_stage.BC.PCoA$values[1,2]*100, digits=2), "%)", sep="") 
+ITS_stage.BC.PCoA.Yaxis = paste("PCo2 (", round(ITS_stage.BC.PCoA$values[2,2]*100, digits=2), "%)", sep="")  
+
+# Convert the PCoA points into a dataframe and add back in the metadata 
+ITS_stage.BC.PCoA.df = data.frame(ITS_stage.BC.PCoA$vectors) %>%  
+  tibble::rownames_to_column(var="SampleID") %>%   
+  select(SampleID, Axis.1, Axis.2) %>%   
+  left_join(data.frame(sample_data(ITS_stage.rare.physeq)),              
+            by = "SampleID") %>%   
+  mutate(stage = factor(Development, levels=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")))  
+# PCoA Plot 
+ITS_stage.BC_PCoA.plot = ggplot(data=ITS_stage.BC.PCoA.df, aes(x=Axis.1, y=Axis.2)) +   
+  geom_point(aes(fill=treatment, color=treatment, shape=compartment, alpha=stage), size=3)+
+  geom_point(aes(color=treatment, shape=compartment), size=3) + 
+  scale_shape_manual(values=c(21, 24)) +   
+  scale_fill_manual(values=c("Control" = "black", "Zeb" = "purple")) +  
+  scale_color_manual(values=c("Control" = "black", "Zeb" = "purple")) + 
+  labs(x=ITS_stage.BC.PCoA.Xaxis, y=ITS_stage.BC.PCoA.Yaxis) +   
+  present_theme  +
+  guides(alpha = guide_legend(ncol = 2))
+ITS_stage.BC_PCoA.plot
+
+set.seed(4242)
+Bac_stage.BC.PCoA = pcoa(Bac_stage.BC.dist)
+
+# Get the axes labels
+Bac_stage.BC.PCoA.Xaxis = paste("PCo1 (", round(Bac_stage.BC.PCoA$values[1,2]*100, digits=2), "%)", sep="")
+Bac_stage.BC.PCoA.Yaxis = paste("PCo2 (", round(Bac_stage.BC.PCoA$values[2,2]*100, digits=2), "%)", sep="")
+
+# Convert the PCoA points into a dataframe and add back in the metadata
+Bac_stage.BC.PCoA.df = data.frame(Bac_stage.BC.PCoA$vectors) %>%
+  tibble::rownames_to_column(var="SampleID") %>%
+  select(SampleID, Axis.1, Axis.2) %>%
+  left_join(data.frame(sample_data(Bac_stage.rare.physeq)), 
+            by = "SampleID") %>%
+  mutate(stage = factor(stage, levels=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")))
+
+# PCoA Plot
+Bac_stage.BC_PCoA.plot = ggplot(data=Bac_stage.BC.PCoA.df, aes(x=Axis.1, y=Axis.2)) +
+  geom_point(aes(fill=group, color=group, shape=compartment, alpha=stage), size=3) +
+  geom_point(aes(color=group, shape=compartment), size=3) +
+  scale_shape_manual(values=c(21, 24)) +
+  scale_fill_manual(values=c("Control" = "black", "Zeb" = "purple")) +
+  scale_color_manual(values=c("Control" = "black", "Zeb" = "purple")) +
+  labs(x=Bac_stage.BC.PCoA.Xaxis, y=Bac_stage.BC.PCoA.Yaxis) +
+  present_theme
+
+Bac_stage.BC_PCoA.plot
+```
+
+## Trajectory analysis
+
+Now lets run the trajectory analysis. Since we aren’t following the exact same samples over stage, lets try this using a permutative method where we randomly select replicates for each stagepoint and run this sampling 100 stages and repeate the same analysis for each group.
+
+``` {r}    
+#ITS
+# Run the trajectory analysis for permutative sampling of replicates per stagepoint. 
+stage_num.df = data.frame(Stage_num = c(1,2,3,4,5,6,7),                           
+                          Development = c("V1", "V2", "V3", "V4", "R1", "R4", "R7"))  
+nperm = 100 
+ITS_stage.traj.direct.df = data.frame() 
+for (i in seq(1:nperm)){   
+  set.seed(i+42)   
+  Iter.meta = data.frame(sample_data(ITS_stage.rare.physeq)) %>%     
+    select(SampleID, treatment, series, Development, plant_rep, compartment) %>%  
+    left_join(stage_num.df) %>%     
+    group_by(treatment, series, Development, compartment) %>%     
+    sample_n(1) %>%     
+    ungroup %>%     
+    mutate(PlantID = paste(treatment, compartment, series, "Iteration", i, sep="_")) %>%  
+    arrange(PlantID, Stage_num)      
+  
+  D = as.matrix(ITS_stage.BC.dist)   
+  D = D[Iter.meta$SampleID, Iter.meta$SampleID] %>%     
+    as.dist()   
+  Plants = Iter.meta$PlantID   
+  stagepoints = Iter.meta$Stage_num      
+  
+  # Trajectory directionality   
+  PlantID.traj <- defineTrajectories(D, Plants, stagepoints)    
+  iter.traj.direct.df = trajectoryMetrics(PlantID.traj) %>%     
+    rename(PlantID = trajectory) %>%     
+    left_join(Iter.meta %>%                 
+                select(PlantID, treatment, series, compartment) %>%             
+                unique, 
+              by = "PlantID") %>%     
+    mutate(Iteration = i)   
+  
+  ITS_stage.traj.direct.df = rbind(ITS_stage.traj.direct.df, iter.traj.direct.df) 
+}
+
+#16S
+#Run the trajectory analysis for purmutative sampling of replicates per stagepoint.
+stage_num.df = data.frame(Stage_num = c(1,2,3,4,5,6,7),
+                          stage = c("V1", "V2", "V3", "V4", "R1", "R4", "R7"))
+
+nperm = 100
+Bac_stage.traj.direct.df = data.frame()
+for (i in seq(1:nperm)){
+  set.seed(i+42)
+  Iter.meta = data.frame(sample_data(Bac_stage.rare.physeq)) %>%
+    select(SampleID, group, series, stage, plant_rep, compartment) %>%
+    left_join(stage_num.df) %>%
+    group_by(group, series, stage, compartment) %>%
+    sample_n(1) %>%
+    ungroup %>%
+    mutate(PlantID = paste(group, compartment, series, "Iteration", i, sep="_")) %>%
+    arrange(PlantID, Stage_num)
+  
+  D = as.matrix(Bac_stage.BC.dist)
+  D = D[Iter.meta$SampleID, Iter.meta$SampleID] %>%
+    as.dist()
+  Plants = Iter.meta$PlantID
+  stagepoints = Iter.meta$Stage_num
+  
+  # Trajectory directionality
+  PlantID.traj <- defineTrajectories(D, Plants, stagepoints)
+
+  iter.traj.direct.df = trajectoryMetrics(PlantID.traj) %>%
+    rename(PlantID = trajectory) %>%
+    left_join(Iter.meta %>%
+                select(PlantID, group, series, compartment) %>%
+                unique, 
+              by = "PlantID") %>%
+    mutate(Iteration = i)
+  Bac_stage.traj.direct.df = rbind(Bac_stage.traj.direct.df, iter.traj.direct.df)
+}
+```
+```{r}    
+#16S
+# Directionality 
+Bac_stage.comp_dir.wilcox.df = data.frame()
+for (grp in c("Control", "Zeb")){
+  comp_dir.wilcox = wilcox.test(x=filter(Bac_stage.traj.direct.df, group==grp, compartment=="rhizoplane")$directionality,
+                                y=filter(Bac_stage.traj.direct.df, group==grp, compartment=="rhizosphere")$directionality,
+                                conf.int=TRUE, conf.level=0.95)
+  Bac_stage.comp_dir.wilcox.df = rbind(Bac_stage.comp_dir.wilcox.df, 
+                             data.frame(group = grp,
+                                        ymax = max(filter(Bac_stage.traj.direct.df, group==grp)$directionality),
+                                        pvalue = comp_dir.wilcox$p.value,
+                                        W = comp_dir.wilcox$statistic,
+                                        diff = comp_dir.wilcox$estimate))
+}
+
+Bac_stage.comp_dir.wilcox.df = Bac_stage.comp_dir.wilcox.df %>%
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",
+                      paste("p =", round(pvalue, digits = 3))))
+
+Bac_stage.comp_dir.plot = ggplot(data=Bac_stage.traj.direct.df, aes(x=compartment, y=directionality)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height=0, width=0.25, size=2) +
+  geom_text(data=Bac_stage.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Directionality") +
+  present_theme +
+  facet_wrap(~group, nrow=1)
+
+Bac_stage.comp_dir.plot
+
+#Collapsing both control and Zeb-treated samples: Directionality
+Bac_coll_stage.comp_dir.wilcox.df = data.frame()
+Bac_coll_stage_comp_dir.wilcox = wilcox.test(
+  x=filter(Bac_stage.traj.direct.df, compartment=="rhizoplane")$directionality,
+  y=filter(Bac_stage.traj.direct.df, compartment=="rhizosphere")$directionality,
+  conf.int=TRUE, conf.level=0.95)  
+
+Bac_coll_stage.comp_dir.wilcox.df = rbind(Bac_coll_stage.comp_dir.wilcox.df,
+                                 data.frame(ymax = max(Bac_stage.traj.direct.df$directionality),
+                                            pvalue = Bac_coll_stage_comp_dir.wilcox$p.value,
+                                            W = Bac_coll_stage_comp_dir.wilcox$statistic,
+                                            diff = Bac_coll_stage_comp_dir.wilcox$estimate)) 
+
+Bac_coll_stage.comp_dir.wilcox.df = Bac_coll_stage.comp_dir.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+Bac_coll_stage.comp_dir.plot = ggplot(data=Bac_stage.traj.direct.df, 
+                             aes(x=compartment, y=directionality)) +
+  geom_boxplot(outlier.shape = NA, fill = c("#33CCFF","#FF6633")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=Bac_coll_stage.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Directionality") +   
+  present_theme 
+
+Bac_coll_stage.comp_dir.plot
+ggsave("Directionality_Collapsed_Stage_16S.png", Bac_coll_stage.comp_dir.plot)
+```
+
+```{r}    
+#ITS
+# Directionality 
+ITS_stage.comp_dir.wilcox.df = data.frame()
+for (grp in c("Control", "Zeb")){   
+  comp_dir.wilcox = wilcox.test(x=filter(ITS_stage.traj.direct.df, treatment==grp, 
+                                         compartment=="rhizoplane")$directionality,
+                                y=filter(ITS_stage.traj.direct.df, treatment==grp, 
+                                         compartment=="rhizosphere")$directionality,
+                                conf.int=TRUE, conf.level=0.95)   
+  ITS_stage.comp_dir.wilcox.df = rbind(ITS_stage.comp_dir.wilcox.df,
+                                   data.frame(treatment = grp,
+                                              ymax = max(filter(ITS_stage.traj.direct.df, treatment==grp)$directionality),
+                                              pvalue = comp_dir.wilcox$p.value,
+                                              W = comp_dir.wilcox$statistic,
+                                              diff = comp_dir.wilcox$estimate)) 
+  }  
+
+ITS_stage.comp_dir.wilcox.df = ITS_stage.comp_dir.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_stage.comp_dir.plot = ggplot(data=ITS_stage.traj.direct.df, 
+                             aes(x=compartment, y=directionality)) +
+  geom_boxplot(outlier.shape = NA) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_stage.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Directionality") +   
+  present_theme +   
+  facet_wrap(~treatment, nrow=1)  
+
+ITS_stage.comp_dir.plot
+
+#Collapsing both control and Zeb-treated samples: Directionality
+ITS_coll_stage.comp_dir.wilcox.df = data.frame()
+ITS_coll_stage_comp_dir.wilcox = wilcox.test(
+  x=filter(ITS_stage.traj.direct.df, compartment=="rhizoplane")$directionality,
+  y=filter(ITS_stage.traj.direct.df, compartment=="rhizosphere")$directionality,
+  conf.int=TRUE, conf.level=0.95)  
+
+ITS_coll_stage.comp_dir.wilcox.df = rbind(ITS_coll_stage.comp_dir.wilcox.df,
+                                 data.frame(ymax = max(ITS_stage.traj.direct.df$directionality),
+                                            pvalue = ITS_coll_stage_comp_dir.wilcox$p.value,
+                                            W = ITS_coll_stage_comp_dir.wilcox$statistic,
+                                            diff = ITS_coll_stage_comp_dir.wilcox$estimate)) 
+
+ITS_coll_stage.comp_dir.wilcox.df = ITS_coll_stage.comp_dir.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_coll_stage.comp_dir.plot = ggplot(data=ITS_stage.traj.direct.df, 
+                             aes(x=compartment, y=directionality)) +
+  geom_boxplot(outlier.shape = NA, fill = c("#33CCFF","#FF6633")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_coll_stage.comp_dir.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Directionality") +   
+  present_theme 
+
+ITS_coll_stage.comp_dir.plot
+ggsave("Directionality_Collapsed_Stage_ITS.png", ITS_coll_stage.comp_dir.plot)
+```
+
+```{r}  
+#16S
+# Length 
+Bac_stage.comp_len.wilcox.df = data.frame()
+for (grp in c("Control", "Zeb")){
+  comp_len.wilcox = wilcox.test(x=filter(Bac_stage.traj.direct.df, group==grp, compartment=="rhizoplane")$length,
+                                y=filter(Bac_stage.traj.direct.df, group==grp, compartment=="rhizosphere")$length,
+                                conf.int=TRUE, conf.level=0.95)
+  Bac_stage.comp_len.wilcox.df = rbind(Bac_stage.comp_len.wilcox.df, 
+                             data.frame(group = grp,
+                                        ymax = max(filter(Bac_stage.traj.direct.df, group==grp)$length),
+                                        pvalue = comp_len.wilcox$p.value,
+                                        W = comp_len.wilcox$statistic,
+                                        diff = comp_len.wilcox$estimate))
+}
+
+Bac_stage.comp_len.wilcox.df = Bac_stage.comp_len.wilcox.df %>%
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",
+                      paste("p =", round(pvalue, digits = 3))))
+
+Bac_stage.comp_len.plot = ggplot(data=Bac_stage.traj.direct.df, aes(x=compartment, y=length)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height=0, width=0.25, size=2) +
+  geom_text(data=Bac_stage.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Trajectory length") +
+  present_theme +
+  facet_wrap(~group, nrow=1)
+
+Bac_stage.comp_len.plot
+
+#Collapsing both control and Zeb-treated samples: Length
+Bac_coll_stage.comp_len.wilcox.df = data.frame()
+Bac_coll_stage_comp_len.wilcox = wilcox.test(
+  x=filter(Bac_stage.traj.direct.df, compartment=="rhizoplane")$length,
+  y=filter(Bac_stage.traj.direct.df, compartment=="rhizosphere")$length,
+  conf.int=TRUE, conf.level=0.95)   
+Bac_coll_stage.comp_len.wilcox.df = rbind(Bac_coll_stage.comp_len.wilcox.df,
+                                 data.frame(ymax = max(Bac_stage.traj.direct.df$length),
+                                            pvalue = Bac_coll_stage_comp_len.wilcox$p.value,
+                                            W = Bac_coll_stage_comp_len.wilcox$statistic,
+                                            diff = Bac_coll_stage_comp_len.wilcox$estimate))
+
+Bac_coll_stage.comp_len.wilcox.df = Bac_coll_stage.comp_len.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+Bac_coll_stage.comp_len.plot = 
+  ggplot(data=Bac_stage.traj.direct.df, aes(x=compartment, y=length)) +   
+  geom_boxplot(outlier.shape = NA, fill = c("#33CCFF","#FF6633")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=Bac_coll_stage.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Trajectory length") +   
+  present_theme
+
+Bac_coll_stage.comp_len.plot
+ggsave("Length_Collapsed_Stage_16S.png", Bac_coll_stage.comp_len.plot)
+```
+
+```{r}  
+#ITS
+# Length 
+ITS_stage.comp_len.wilcox.df = data.frame() 
+for (grp in c("Control", "Zeb")){   
+  comp_len.wilcox = wilcox.test(x=filter(ITS_stage.traj.direct.df, treatment==grp, compartment=="rhizoplane")$length,                             
+                                y=filter(ITS_stage.traj.direct.df, treatment==grp, compartment=="rhizosphere")$length,                                 
+                                conf.int=TRUE, conf.level=0.95)   
+  ITS_stage.comp_len.wilcox.df = rbind(ITS_stage.comp_len.wilcox.df,
+                                   data.frame(treatment = grp,
+                                              ymax = max(filter(ITS_stage.traj.direct.df, treatment==grp)$length),
+                                              pvalue = comp_len.wilcox$p.value,
+                                              W = comp_len.wilcox$statistic,
+                                              diff = comp_len.wilcox$estimate)) 
+  }  
+
+ITS_stage.comp_len.wilcox.df = ITS_stage.comp_len.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_stage.comp_len.plot = 
+  ggplot(data=ITS_stage.traj.direct.df, aes(x=compartment, y=length)) +   
+  geom_boxplot(outlier.shape = NA) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_stage.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +   
+  labs(x = "Plant Compartment", y = "Trajectory length") +   
+  present_theme +   
+  facet_wrap(~treatment, nrow=1)  
+
+ITS_stage.comp_len.plot
+
+#Collapsing both control and Zeb-treated samples: Length
+ITS_coll_stage.comp_len.wilcox.df = data.frame()
+ITS_coll_stage_comp_len.wilcox = wilcox.test(
+  x=filter(ITS_stage.traj.direct.df, compartment=="rhizoplane")$length,
+  y=filter(ITS_stage.traj.direct.df, compartment=="rhizosphere")$length,
+  conf.int=TRUE, conf.level=0.95)   
+ITS_coll_stage.comp_len.wilcox.df = rbind(ITS_coll_stage.comp_len.wilcox.df,
+                                 data.frame(ymax = max(ITS_stage.traj.direct.df$length),
+                                            pvalue = ITS_coll_stage_comp_len.wilcox$p.value,
+                                            W = ITS_coll_stage_comp_len.wilcox$statistic,
+                                            diff = ITS_coll_stage_comp_len.wilcox$estimate))
+
+ITS_coll_stage.comp_len.wilcox.df = ITS_coll_stage.comp_len.wilcox.df %>%   
+  mutate(sig = ifelse(pvalue < 0.001, "p < 0.001",                       
+                      paste("p =", round(pvalue, digits = 3))))  
+
+ITS_coll_stage.comp_len.plot = 
+  ggplot(data=ITS_stage.traj.direct.df, aes(x=compartment, y=length)) +   
+  geom_boxplot(outlier.shape = NA, fill = c("#33CCFF","#FF6633")) +   
+  geom_jitter(height=0, width=0.25, size=2) +   
+  geom_text(data=ITS_coll_stage.comp_len.wilcox.df, aes(label = sig, y=ymax), size=8*5/14, x=1.5) +
+  labs(x = "Plant Compartment", y = "Trajectory length") +   
+  present_theme
+
+ITS_coll_stage.comp_len.plot
+ggsave("Length_Collapsed_Stage_ITS.png", ITS_coll_stage.comp_len.plot)
+```
+Rhizoplane has significantly more trajectory length (but not directionality) than rhizosphere regardless of the treatment.
+
+# Super Figure
+```{r}
+ITS_row <- cowplot::plot_grid(ITS_coll_time.comp_dir.plot +
+                         lims(y = c(0.305, 0.375)) +
+                         ggtitle("Harvest at same timepoint"),
+                       ITS_coll_stage.comp_dir.plot +
+                         lims(y = c(0.305, 0.375)) +
+                         ggtitle("Harvest at same growth stage"),
+                       ncol = 2)
+
+BAC_row <- cowplot::plot_grid(Bac_coll_time.comp_dir.plot +
+                            lims(y = c(0.30, 0.44)) +
+                            ggtitle("Harvest at same timepoint"),
+                          Bac_coll_stage.comp_dir.plot +
+                            lims(y = c(0.30, 0.44)) +
+                            ggtitle("Harvest at same growth stage"),
+                          ncol = 2)
+
+A_title <- ggdraw() +
+  draw_label("A. Fungi", fontface = "bold", x = 0.02, hjust = 0)
+
+B_title <- ggdraw() +
+  draw_label("B. Bacteria", fontface = "bold", x = 0.02, hjust = 0)
+
+final_plot <- plot_grid(
+  A_title,
+  ITS_row,
+  B_title,
+  BAC_row,
+  ncol = 1,
+  rel_heights = c(0.05, 1, 0.05, 1))
+final_plot
+ggsave("Full_Trajectory_Collapsed.png", width = 8, height = 8, dpi = 300)
+```
+# Community dissimilarity over time and life stage
+
+Now lets see how different the Zeb treated and untreated communities are over time. Are they becoming less similar over time or is there a peak in dissimilarity?
+
+#### ITS
+## Across timepoints
+
+First, lets look at dissimilarity between treated and untreated plants within each timepoint. Note that life stage will likely be different at each timepoint.
+
+```{r}         
+# Get new metadata for each sample pair 
+ITS_sample_1.meta = data.frame(sample_data(ITS_time.rare.physeq)) %>% 
+  select(SampleID, treatment, age_days, compartment) %>%
+  dplyr::rename(Sample_1 = SampleID,
+         group_1 = treatment,          
+         stage_1 = age_days,          
+         compartment_1 = compartment)   
+
+ITS_sample_2.meta = data.frame(sample_data(ITS_time.rare.physeq)) %>%   
+  select(SampleID, treatment, age_days, compartment) %>%   
+  dplyr::rename(Sample_2 = SampleID,          
+         group_2 = treatment,          
+         stage_2 = age_days,          
+         compartment_2 = compartment)  
+
+# Get Bray-Curtis dissimilarity between each plant in dataframe format and add in metadata 
+
+ITS_time.BC.dist.mat = as.matrix(ITS_time.BC.dist) 
+ITS_time.BC.dist.mat[upper.tri(ITS_time.BC.dist.mat, diag = TRUE)] = NA 
+ITS_time.BC.dist.df = data.frame(ITS_time.BC.dist.mat) %>%   
+  tibble::rownames_to_column(var="Sample_1") %>%   
+  tidyr::gather(key="Sample_2", value="BC", -Sample_1) %>%   
+  filter(!is.na(BC)) %>%   
+  left_join(ITS_sample_1.meta) %>%   
+  left_join(ITS_sample_2.meta)  
+
+# Filter to same timepoint, compartment but different treatment. 
+ITS_sub.time.BC.dist.df = ITS_time.BC.dist.df %>%   
+  filter(stage_1 == stage_2,
+         compartment_1 == compartment_2,          
+         group_1 != group_2) %>%   
+  mutate(day = factor(gsub("day", " ", stage_1), 
+                      levels=c("3", "7", "14", "21", "35", "49", "63"))) 
+
+# Run Kruskal-Wallis tests and Dunn's Tests 
+ITS_time.BC.dist.dunn.cld.df = data.frame() 
+for (com in c("rhizoplane", "rhizosphere")){
+  ITS_time.BC.dist.kruskal = kruskal.test(BC ~ day, data=filter(ITS_sub.time.BC.dist.df, compartment_1==com))   
+  print(com)   
+  print(ITS_time.BC.dist.kruskal)   
+  ITS_time.BC.dist.dunn = FSA::dunnTest(BC ~ day, data=filter(ITS_sub.time.BC.dist.df, compartment_1==com), method="bh")   
+  ITS_time.BC.dist.dunn.cld = rcompanion::cldList(comparison = ITS_time.BC.dist.dunn$res$Comparison,                                               
+                                              p.value = ITS_time.BC.dist.dunn$res$P.adj,
+                                              threshold = 0.05) %>%     
+    mutate(day = Group,            
+           compartment_1 = com)   
+  ITS_time.BC.dist.dunn.cld.df = rbind(ITS_time.BC.dist.dunn.cld.df, ITS_time.BC.dist.dunn.cld) 
+  }
+```
+```{r}         
+# Plot 
+ITS_time.BC.dist.plot = ggplot(data=ITS_sub.time.BC.dist.df, aes(x=day, y=BC)) +   
+  geom_boxplot(outlier.shape = NA) +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=ITS_time.BC.dist.dunn.cld.df, aes(x=day, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +   
+  facet_wrap(~compartment_1)  
+
+ITS_time.BC.dist.plot
+ggsave("ITS_Dissimilarity_Time.png")
+```
+## Across life stage
+
+Next, lets look across the life stages.
+
+```{r}         
+# Get new metadata for each sample pair 
+ITS_sample_1.meta = data.frame(sample_data(ITS_stage.rare.physeq)) %>%   
+  select(SampleID, treatment, Development, compartment) %>%   
+  dplyr::rename(Sample_1 = SampleID,          
+         group_1 = treatment,          
+         stage_1 = Development,          
+         compartment_1 = compartment)   
+
+ITS_sample_2.meta = data.frame(sample_data(ITS_stage.rare.physeq)) %>%   
+  select(SampleID, treatment, Development, compartment) %>%   
+  dplyr::rename(Sample_2 = SampleID,          
+         group_2 = treatment,          
+         stage_2 = Development,          
+         compartment_2 = compartment)  
+
+# Get Bray-Curtis dissimilarity between each plant in dataframe format and add in metadata 
+ITS_stage.BC.dist.mat = as.matrix(ITS_stage.BC.dist) 
+ITS_stage.BC.dist.mat[upper.tri(ITS_stage.BC.dist.mat, diag = TRUE)] = NA 
+ITS_stage.BC.dist.df = data.frame(ITS_stage.BC.dist.mat) %>%   
+  tibble::rownames_to_column(var="Sample_1") %>%   
+  tidyr::gather(key="Sample_2", value="BC", -Sample_1) %>%   
+  filter(!is.na(BC)) %>%   
+  left_join(ITS_sample_1.meta) %>%   
+  left_join(ITS_sample_2.meta) 
+
+# Filter to same stagepoint, compartment but different treatment. 
+ITS_sub.stage.BC.dist.df = ITS_stage.BC.dist.df %>%   
+  filter(stage_1 == stage_2,          
+         compartment_1 == compartment_2,          
+         group_1 != group_2) %>%   
+  mutate(stage = factor(stage_1, 
+                        levels=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")))  
+
+# Run Kruskal-Wallis tests and Dunn's Tests 
+ITS_stage.BC.dist.dunn.cld.df = data.frame() 
+for (com in c("rhizoplane", "rhizosphere")){   
+  ITS_stage.BC.dist.kruskal = kruskal.test(BC ~ stage, data=filter(ITS_sub.stage.BC.dist.df, compartment_1==com))   
+  print(com)   
+  print(ITS_stage.BC.dist.kruskal)   
+  ITS_stage.BC.dist.dunn = FSA::dunnTest(BC ~ stage, data=filter(ITS_sub.stage.BC.dist.df, compartment_1==com), method="bh")   
+  ITS_stage.BC.dist.dunn.cld = rcompanion::cldList(comparison = ITS_stage.BC.dist.dunn$res$Comparison,                                               
+                                               p.value = ITS_stage.BC.dist.dunn$res$P.adj,
+                                               threshold = 0.05) %>%     
+    mutate(stage = Group,            
+           compartment_1 = com)   
+  ITS_stage.BC.dist.dunn.cld.df = rbind(ITS_stage.BC.dist.dunn.cld.df, ITS_stage.BC.dist.dunn.cld)
+  }
+```
+
+
+```{r}         
+# Plot 
+ITS_stage.BC.dist.plot = ggplot(data=ITS_sub.stage.BC.dist.df, aes(x=stage, y=BC)) +   
+  geom_boxplot(outlier.shape = NA) +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=ITS_stage.BC.dist.dunn.cld.df, aes(x=stage, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +   
+  facet_wrap(~compartment_1)  
+
+ITS_stage.BC.dist.plot
+ggsave("ITS_Dissimilarity_Stage.png")
+```
+#### 16S
+## Across timepoints
+
+First, lets look at dissimilarity between treated and untreated plants within each timepoint. Note that life stage will likely be different at each timepoint.
+
+```{r}         
+Bac_sample_1.meta = data.frame(sample_data(Bac_time.rare.physeq)) %>%
+  select(SampleID, group, stage, compartment) %>%
+  rename(Sample_1 = SampleID,
+         group_1 = group,
+         stage_1 = stage,
+         compartment_1 = compartment)
+
+
+Bac_sample_2.meta = data.frame(sample_data(Bac_time.rare.physeq)) %>%
+  select(SampleID, group, stage, compartment) %>%
+  rename(Sample_2 = SampleID,
+         group_2 = group,
+         stage_2 = stage,
+         compartment_2 = compartment)
+
+# Get Bray-Curtis dissimilarity between each plant in dataframe format and add in metadata
+Bac_time.BC.dist.mat = as.matrix(Bac_time.BC.dist)
+Bac_time.BC.dist.mat[upper.tri(Bac_time.BC.dist.mat, diag = TRUE)] = NA
+Bac_time.BC.dist.df = data.frame(Bac_time.BC.dist.mat) %>%
+  tibble::rownames_to_column(var="Sample_1") %>%
+  tidyr::gather(key="Sample_2", value="BC", -Sample_1) %>%
+  filter(!is.na(BC)) %>%
+  left_join(Bac_sample_1.meta) %>%
+  left_join(Bac_sample_2.meta)
+
+# Filter to same timepoint, compartment but different treatment.
+Bac_sub.time.BC.dist.df = Bac_time.BC.dist.df %>%
+  filter(stage_1 == stage_2,
+         compartment_1 == compartment_2,
+         group_1 != group_2) %>%
+  mutate(day = factor(gsub("day", "", stage_1), levels=c("3", "7", "14", "21", "35", "49", "63")))
+
+# Run Kruskal-Wallis tests and Dunn's Tests
+Bac_time.BC.dist.dunn.cld.df = data.frame()
+for (com in c("rhizoplane", "rhizosphere")){
+  Bac_time.BC.dist.kruskal = kruskal.test(BC ~ day, data=filter(Bac_sub.time.BC.dist.df, compartment_1==com))
+  print(com)
+  print(Bac_time.BC.dist.kruskal)
+  Bac_time.BC.dist.dunn = FSA::dunnTest(BC ~ day, data=filter(Bac_sub.time.BC.dist.df, compartment_1==com), method="bh")
+  Bac_time.BC.dist.dunn.cld = rcompanion::cldList(comparison = Bac_time.BC.dist.dunn$res$Comparison,
+                                              p.value = Bac_time.BC.dist.dunn$res$P.adj,
+                                              threshold = 0.05) %>%
+    mutate(day = Group,
+           compartment_1 = com)
+  Bac_time.BC.dist.dunn.cld.df = rbind(Bac_time.BC.dist.dunn.cld.df, Bac_time.BC.dist.dunn.cld)
+}
+```
+```{r}
+Bac_time.BC.dist.plot = ggplot(data=Bac_sub.time.BC.dist.df, aes(x=day, y=BC)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height=0, width = 0.25) +
+  geom_text(data=Bac_time.BC.dist.dunn.cld.df, aes(x=day, label=Letter), y = 1) +
+  lims(y=c(0,1)) +
+  present_theme +
+  facet_wrap(~compartment_1)
+
+Bac_time.BC.dist.plot
+ggsave("16S_Dissimilarity_Time.png")
+```
+##Across life stage
+Next, let's look across the life stages
+
+```{r}
+# Get new metadata for each sample pair
+Bac_sample_1.meta = data.frame(sample_data(Bac_stage.rare.physeq)) %>%
+  select(SampleID, group, stage, compartment) %>%
+  rename(Sample_1 = SampleID,
+         group_1 = group,
+         stage_1 = stage,
+         compartment_1 = compartment)
+
+
+Bac_sample_2.meta = data.frame(sample_data(Bac_stage.rare.physeq)) %>%
+  select(SampleID, group, stage, compartment) %>%
+  rename(Sample_2 = SampleID,
+         group_2 = group,
+         stage_2 = stage,
+         compartment_2 = compartment)
+
+# Get Bray-Curtis dissimilarity between each plant in dataframe format and add in metadata
+Bac_stage.BC.dist.mat = as.matrix(Bac_stage.BC.dist)
+Bac_stage.BC.dist.mat[upper.tri(Bac_stage.BC.dist.mat, diag = TRUE)] = NA
+Bac_stage.BC.dist.df = data.frame(Bac_stage.BC.dist.mat) %>%
+  tibble::rownames_to_column(var="Sample_1") %>%
+  tidyr::gather(key="Sample_2", value="BC", -Sample_1) %>%
+  filter(!is.na(BC)) %>%
+  left_join(Bac_sample_1.meta) %>%
+  left_join(Bac_sample_2.meta)
+
+# Filter to same stagepoint, compartment but different treatment.
+Bac_sub.stage.BC.dist.df = Bac_stage.BC.dist.df %>%
+  filter(stage_1 == stage_2,
+         compartment_1 == compartment_2,
+         group_1 != group_2) %>%
+  mutate(stage = factor(stage_1, levels=c("V1", "V2", "V3", "V4", "R1", "R4", "R7")))
+
+# Run Kruskal-Wallis tests and Dunn's Tests
+Bac_stage.BC.dist.dunn.cld.df = data.frame()
+for (com in c("rhizoplane", "rhizosphere")){
+  Bac_stage.BC.dist.kruskal = kruskal.test(BC ~ stage, data=filter(Bac_sub.stage.BC.dist.df, compartment_1==com))
+  print(com)
+  print(Bac_stage.BC.dist.kruskal)
+  Bac_stage.BC.dist.dunn = FSA::dunnTest(BC ~ stage, data=filter(Bac_sub.stage.BC.dist.df, compartment_1==com), method="bh")
+  Bac_stage.BC.dist.dunn.cld = rcompanion::cldList(comparison = Bac_stage.BC.dist.dunn$res$Comparison,
+                                              p.value = Bac_stage.BC.dist.dunn$res$P.adj,
+                                              threshold = 0.05) %>%
+    mutate(stage = Group,
+           compartment_1 = com)
+  Bac_stage.BC.dist.dunn.cld.df = rbind(Bac_stage.BC.dist.dunn.cld.df, Bac_stage.BC.dist.dunn.cld)
+}
+```
+```{r}
+# Plot
+Bac_stage.BC.dist.plot = ggplot(data=Bac_sub.stage.BC.dist.df, aes(x=stage, y=BC)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(height=0, width = 0.25) +
+  geom_text(data=Bac_stage.BC.dist.dunn.cld.df, aes(x=stage, label=Letter), y = 1) +
+  lims(y=c(0,1)) +
+  present_theme +
+  facet_wrap(~compartment_1)
+
+Bac_stage.BC.dist.plot
+ggsave("16S_Dissimilarity_Stage.png")
+```
+## Final Figures
+
+```{r}         
+#TIME
+  #ITS RHIZOPLANE
+rp_ITS_sub.time.BC.dist.df <- ITS_sub.time.BC.dist.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_ITS_sub.time.BC.dist.df
+
+rp_ITS_time.BC.dist.dunn.cld.df <- ITS_time.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_ITS_time.BC.dist.dunn.cld.df
+
+rp_ITS_sub.time.BC.dist.df$time.series <- "A2. ITS"
+
+rp_ITS_time.BC.dist.plot = ggplot(data=rp_ITS_sub.time.BC.dist.df, aes(x=day, y=BC)) +   
+  geom_boxplot(outlier.shape = NA, fill = "#FCE8FC") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rp_ITS_time.BC.dist.dunn.cld.df, aes(x=day, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +
+  facet_grid(.~time.series)
+rp_ITS_time.BC.dist.plot
+
+  #ITS RHIZOSPHERE
+rs_ITS_sub.time.BC.dist.df <- ITS_sub.time.BC.dist.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_ITS_sub.time.BC.dist.df
+
+rs_ITS_time.BC.dist.dunn.cld.df <- ITS_time.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_ITS_time.BC.dist.dunn.cld.df
+
+rs_ITS_sub.time.BC.dist.df$time.series <- "A2. ITS"
+
+rs_ITS_time.BC.dist.plot = ggplot(data=rs_ITS_sub.time.BC.dist.df, aes(x=day, y=BC)) +   
+  geom_boxplot(outlier.shape = NA, fill = "#FCE8FC") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rs_ITS_time.BC.dist.dunn.cld.df, aes(x=day, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +
+  facet_grid(.~time.series)
+rs_ITS_time.BC.dist.plot
+
+  #16S RHIZOPLAN
+rp_Bac_sub.time.BC.dist.df <- Bac_sub.time.BC.dist.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_Bac_sub.time.BC.dist.df
+
+rp_Bac_time.BC.dist.dunn.cld.df <- Bac_time.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_Bac_time.BC.dist.dunn.cld.df
+
+rp_Bac_sub.time.BC.dist.df$time.series <- "A1. 16S"
+
+rp_Bac_time.BC.dist.plot = ggplot(data=rp_Bac_sub.time.BC.dist.df, aes(x=day, y=BC)) +   
+  geom_boxplot(outlier.shape = NA, fill = "#E8FCE9") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rp_Bac_time.BC.dist.dunn.cld.df, aes(x=day, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +
+  facet_grid(.~time.series)
+rp_Bac_time.BC.dist.plot
+
+  #16S RHIZOSPHERE
+rs_Bac_sub.time.BC.dist.df <- Bac_sub.time.BC.dist.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_Bac_sub.time.BC.dist.df
+
+rs_Bac_time.BC.dist.dunn.cld.df <- Bac_time.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_Bac_time.BC.dist.dunn.cld.df
+
+rs_Bac_sub.time.BC.dist.df$time.series <- "A1. 16S"
+
+rs_Bac_time.BC.dist.plot = ggplot(data=rs_Bac_sub.time.BC.dist.df, aes(x=day, y=BC)) +   
+  geom_boxplot(outlier.shape = NA, fill= "#E8FCE9") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rs_ITS_time.BC.dist.dunn.cld.df, aes(x=day, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +
+  facet_grid(.~ time.series)
+rs_Bac_time.BC.dist.plot
+
+#STAGE
+  #ITS RHIZOPLANE
+rp_ITS_sub.stage.BC.dist.df <- ITS_sub.stage.BC.dist.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_ITS_sub.stage.BC.dist.df
+
+rp_ITS_stage.BC.dist.dunn.cld.df <- ITS_stage.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_ITS_stage.BC.dist.dunn.cld.df
+
+rp_ITS_sub.stage.BC.dist.df$growth.series <- "B2. ITS"
+
+rp_ITS_stage.BC.dist.plot = ggplot(data=rp_ITS_sub.stage.BC.dist.df, aes(x=stage, y=BC)) +   geom_boxplot(outlier.shape = NA, fill = "#F297F1") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rp_ITS_stage.BC.dist.dunn.cld.df, aes(x=stage, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +
+  facet_grid(.~ growth.series)
+rp_ITS_stage.BC.dist.plot
+
+  #ITS RHIZOSPHERE
+rs_ITS_sub.stage.BC.dist.df <- ITS_sub.stage.BC.dist.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_ITS_sub.stage.BC.dist.df
+
+rs_ITS_stage.BC.dist.dunn.cld.df <- ITS_stage.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_ITS_stage.BC.dist.dunn.cld.df
+
+rs_ITS_sub.stage.BC.dist.df$growth.series <- "B2. ITS"
+
+rs_ITS_stage.BC.dist.plot = ggplot(data=rs_ITS_sub.stage.BC.dist.df, aes(x=stage, y=BC)) +   geom_boxplot(outlier.shape = NA, fill = "#F297F1") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rs_ITS_stage.BC.dist.dunn.cld.df, aes(x=stage, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme + 
+  facet_grid(. ~ growth.series)
+rs_ITS_stage.BC.dist.plot
+
+  #16S RHIZOPLAN
+rp_Bac_sub.stage.BC.dist.df <- Bac_sub.stage.BC.dist.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_Bac_sub.stage.BC.dist.df
+
+rp_Bac_stage.BC.dist.dunn.cld.df <- Bac_stage.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizoplane")
+rp_Bac_stage.BC.dist.dunn.cld.df
+
+rp_Bac_sub.stage.BC.dist.df$growth.series <- "B1. 16S"
+
+rp_Bac_stage.BC.dist.plot = ggplot(data=rp_Bac_sub.stage.BC.dist.df, aes(x=stage, y=BC)) +   geom_boxplot(outlier.shape = NA, fill = "#97F298") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rp_Bac_stage.BC.dist.dunn.cld.df, aes(x=stage, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +
+  facet_grid(. ~ growth.series)
+rp_Bac_stage.BC.dist.plot
+
+  #16S RHIZOSPHERE
+rs_Bac_sub.stage.BC.dist.df <- Bac_sub.stage.BC.dist.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_Bac_sub.stage.BC.dist.df
+
+rs_Bac_stage.BC.dist.dunn.cld.df <- Bac_stage.BC.dist.dunn.cld.df %>% 
+  filter(compartment_1 == "rhizosphere")
+rs_Bac_stage.BC.dist.dunn.cld.df
+
+rs_Bac_sub.stage.BC.dist.df$growth.series <- "B1. 16S"
+
+rs_Bac_stage.BC.dist.plot = ggplot(data=rs_Bac_sub.stage.BC.dist.df, aes(x=stage, y=BC)) +   geom_boxplot(outlier.shape = NA, fill = "#97F298") +   
+  geom_jitter(height=0, width = 0.25) +   
+  geom_text(data=rs_Bac_stage.BC.dist.dunn.cld.df, aes(x=stage, label=Letter), y = 1) +   
+  lims(y=c(0,1)) +   
+  present_theme +
+  facet_grid(. ~ growth.series)
+  
+rs_Bac_stage.BC.dist.plot
+
+  #Assemble
+
+A_title <- ggdraw() +
+  draw_label("A. Harvest at same timepoint", fontface = "bold", x = 0.02, 
+             hjust = 0, size = 10)
+
+B_title <- ggdraw() +
+  draw_label("B. Harvest at same growth stage", fontface = "bold", x = 0.02, 
+             hjust = 0, size = 10)
+
+RS_Time_row <- cowplot::plot_grid(rs_Bac_time.BC.dist.plot,
+                                  rs_ITS_time.BC.dist.plot,
+                                  ncol = 2)
+RS_Growth_row <- cowplot::plot_grid(rs_Bac_stage.BC.dist.plot,
+                                    rs_ITS_stage.BC.dist.plot,
+                                    ncol = 2)
+RS_Dissimilarity_plot <- plot_grid(A_title,
+                                   RS_Time_row,
+                                   B_title,
+                                   RS_Growth_row,
+                                   ncol = 1,
+                                   rel_heights = c(0.05, 1, 0.05, 1))
+RS_Dissimilarity_plot
+ggsave("RHIZOSPHERE_Dissimilarity_full.png")
+
+RP_Time_row <- cowplot::plot_grid(rp_Bac_time.BC.dist.plot,
+                                  rp_ITS_time.BC.dist.plot,
+                                  ncol = 2)
+RP_Growth_row <- cowplot::plot_grid(rp_Bac_stage.BC.dist.plot,
+                                    rp_ITS_stage.BC.dist.plot,
+                                    ncol = 2)
+RP_Dissimilarity_plot <- plot_grid(A_title,
+                                   RP_Time_row,
+                                   B_title,
+                                   RP_Growth_row,
+                                   ncol = 1,
+                                   rel_heights = c(0.05, 1, 0.05, 1))
+RP_Dissimilarity_plot
+ggsave("RHIZOPLANE_Dissimilarity_full.png")
+
+```
+
+##Tables of metrics: cumulative distance, directionality, betadispersion
+```{r} 
+#TIME
+  #ITS
+nperm <- 100
+res_list <- list()
+
+for (i in seq_len(nperm)) {
+  set.seed(i + 42)
+
+  Iter.meta <- data.frame(sample_data(ITS_time.rare.physeq)) %>%
+    select(SampleID, treatment, series, age_days, plant_rep, compartment) %>%
+    mutate(Stage_num = as.numeric(age_days)) %>%
+    group_by(treatment, series, age_days, compartment) %>%
+    sample_n(1) %>%
+    ungroup() %>%
+    mutate(PlantID = paste(treatment, compartment, series, "Iteration", i, sep = "_")) %>%
+    arrange(PlantID, Stage_num)
+
+  D <- as.matrix(ITS_time.BC.dist)
+  D <- as.dist(D[Iter.meta$SampleID, Iter.meta$SampleID])
+
+  #Directionality and cumulative distance
+  traj <- defineTrajectories(D, Iter.meta$PlantID, Iter.meta$Stage_num)
+  met <- trajectoryMetrics(traj) %>%
+    dplyr::rename(PlantID = trajectory) %>%
+    select(PlantID, n_timepoints = n, cumulative_distance = length, directionality)
+
+  #Beta dispersion
+  grp <- interaction(Iter.meta$treatment, Iter.meta$compartment, drop = TRUE)
+  bd <- betadisper(D, grp, type = "centroid")
+
+  disp_plant <- data.frame(PlantID = Iter.meta$PlantID,
+                           dist_to_centroid = bd$distances) %>%
+    group_by(PlantID) %>%
+    summarise(beta_disp = mean(dist_to_centroid), .groups = "drop")
+
+  #Replicate number
+  n_grp <- Iter.meta %>%
+    group_by(treatment, compartment) %>%
+    summarise(n_trajectories = n_distinct(PlantID),
+              n_samples = n(),
+              .groups = "drop")
+
+  #Build the table
+  res_list[[i]] <- met %>%
+    left_join(disp_plant, by = "PlantID") %>%
+    left_join(Iter.meta %>% select(PlantID, treatment, series, compartment) %>% unique(),
+              by = "PlantID") %>%
+    left_join(n_grp, by = c("treatment", "compartment")) %>%
+    mutate(Iteration = i)
+}
+
+ITS_time.traj.all.df <- bind_rows(res_list)
+
+#Summary table
+ITS_time.traj.summary <- ITS_time.traj.all.df %>%
+  group_by(treatment, compartment, Iteration) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp), mean),
+            n_trajectories = first(n_trajectories),
+            n_samples = first(n_samples),
+            .groups = "drop") %>%
+  group_by(treatment, compartment) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp),
+                   list(mean = mean, sd = sd,
+                        q025 = ~quantile(.x, 0.025), q975 = ~quantile(.x, 0.975)),
+                   .names = "{.col}_{.fn}"),
+            n_trajectories = mean(n_trajectories),
+            n_samples = mean(n_samples),
+            .groups = "drop")
+
+ITS_time.traj.summary
+
+## Export
+write.csv(ITS_time.traj.all.df, "ITS_time_traj_all_iterations.csv", row.names = FALSE)
+write.csv(ITS_time.traj.summary, "ITS_time_traj_summary.csv", row.names = FALSE)
+ 
+  #16S
+nperm <- 100
+res_list <- list()
+
+for (i in seq_len(nperm)) {
+  set.seed(i + 42)
+
+  Iter.meta <- data.frame(sample_data(Bac_time.rare.physeq)) %>%
+    select(SampleID, group, series, stage, plant_rep, compartment) %>%
+    mutate(Stage_num = as.numeric(gsub("day", "", stage))) %>%
+    group_by(group, series, stage, compartment) %>%
+    sample_n(1) %>%
+    ungroup() %>%
+    mutate(PlantID = paste(group, compartment, series, "Iteration", i, sep = "_")) %>%
+    arrange(PlantID, Stage_num)
+
+  D <- as.matrix(Bac_time.BC.dist)
+  D <- as.dist(D[Iter.meta$SampleID, Iter.meta$SampleID])
+
+  #Directionality and cumulative distance
+  traj <- defineTrajectories(D, Iter.meta$PlantID, Iter.meta$Stage_num)
+  met <- trajectoryMetrics(traj) %>%
+    dplyr::rename(PlantID = trajectory) %>%
+    select(PlantID, n_timepoints = n, cumulative_distance = length, directionality)
+
+  #Beta dispersion
+  grp <- interaction(Iter.meta$group, Iter.meta$compartment, drop = TRUE)
+  bd <- betadisper(D, grp, type = "centroid")
+
+  disp_plant <- data.frame(PlantID = Iter.meta$PlantID,
+                           dist_to_centroid = bd$distances) %>%
+    group_by(PlantID) %>%
+    summarise(beta_disp = mean(dist_to_centroid), .groups = "drop")
+
+  #Replicate number
+  n_grp <- Iter.meta %>%
+    group_by(group, compartment) %>%
+    summarise(n_trajectories = n_distinct(PlantID),
+              n_samples = n(),
+              .groups = "drop")
+
+  #Build the table
+  res_list[[i]] <- met %>%
+    left_join(disp_plant, by = "PlantID") %>%
+    left_join(Iter.meta %>% select(PlantID, group, series, compartment) %>% unique(),
+              by = "PlantID") %>%
+    left_join(n_grp, by = c("group", "compartment")) %>%
+    mutate(Iteration = i)
+}
+
+Bac_time.traj.all.df <- bind_rows(res_list)
+
+#Summary table
+Bac_time.traj.summary <- Bac_time.traj.all.df %>%
+  group_by(group, compartment, Iteration) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp), mean),
+            n_trajectories = first(n_trajectories),
+            n_samples = first(n_samples),
+            .groups = "drop") %>%
+  group_by(group, compartment) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp),
+                   list(mean = mean, sd = sd,
+                        q025 = ~quantile(.x, 0.025), q975 = ~quantile(.x, 0.975)),
+                   .names = "{.col}_{.fn}"),
+            n_trajectories = mean(n_trajectories),
+            n_samples = mean(n_samples),
+            .groups = "drop")
+
+Bac_time.traj.summary
+
+## Export
+write.csv(Bac_time.traj.all.df, "Bac_time_traj_all_iterations.csv", row.names = FALSE)
+write.csv(Bac_time.traj.summary, "Bac_time_traj_summary.csv", row.names = FALSE)
+
+#STAGE
+  #ITS
+stage_num.df = data.frame(Stage_num = c(1,2,3,4,5,6,7),                           
+                          Development = c("V1", "V2", "V3", "V4", "R1", "R4", "R7"))  
+nperm <- 100
+res_list <- list()
+
+for (i in seq_len(nperm)) {
+  set.seed(i + 42)
+
+  Iter.meta <- data.frame(sample_data(ITS_stage.rare.physeq)) %>%
+    select(SampleID, treatment, series, Development, plant_rep, compartment) %>%
+    left_join(stage_num.df) %>%
+    group_by(treatment, series, Development, compartment) %>%
+    sample_n(1) %>%
+    ungroup() %>%
+    mutate(PlantID = paste(treatment, compartment, series, "Iteration", i, sep = "_")) %>%
+    arrange(PlantID, Stage_num)
+
+  D <- as.matrix(ITS_stage.BC.dist)
+  D <- as.dist(D[Iter.meta$SampleID, Iter.meta$SampleID])
+
+  #Directionality and cumulative distance
+  traj <- defineTrajectories(D, Iter.meta$PlantID, Iter.meta$Stage_num)
+  met <- trajectoryMetrics(traj) %>%
+    dplyr::rename(PlantID = trajectory) %>%
+    select(PlantID, n_stagepoints = n, cumulative_distance = length, directionality)
+
+  #Beta dispersion
+  grp <- interaction(Iter.meta$treatment, Iter.meta$compartment, drop = TRUE)
+  bd <- betadisper(D, grp, type = "centroid")
+
+  disp_plant <- data.frame(PlantID = Iter.meta$PlantID,
+                           dist_to_centroid = bd$distances) %>%
+    group_by(PlantID) %>%
+    summarise(beta_disp = mean(dist_to_centroid), .groups = "drop")
+
+  #Replicate number
+  n_grp <- Iter.meta %>%
+    group_by(treatment, compartment) %>%
+    summarise(n_trajectories = n_distinct(PlantID),
+              n_samples = n(),
+              .groups = "drop")
+
+  #Build the table
+  res_list[[i]] <- met %>%
+    left_join(disp_plant, by = "PlantID") %>%
+    left_join(Iter.meta %>% select(PlantID, treatment, series, compartment) %>% unique(),
+              by = "PlantID") %>%
+    left_join(n_grp, by = c("treatment", "compartment")) %>%
+    mutate(Iteration = i)
+}
+
+ITS_stage.traj.all.df <- bind_rows(res_list)
+
+#Summary table
+ITS_stage.traj.summary <- ITS_stage.traj.all.df %>%
+  group_by(treatment, compartment, Iteration) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp), mean),
+            n_trajectories = first(n_trajectories),
+            n_samples = first(n_samples),
+            .groups = "drop") %>%
+  group_by(treatment, compartment) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp),
+                   list(mean = mean, sd = sd,
+                        q025 = ~quantile(.x, 0.025), q975 = ~quantile(.x, 0.975)),
+                   .names = "{.col}_{.fn}"),
+            n_trajectories = mean(n_trajectories),
+            n_samples = mean(n_samples),
+            .groups = "drop")
+
+ITS_stage.traj.summary
+
+## Export
+write.csv(ITS_stage.traj.all.df, "ITS_stage_traj_all_iterations.csv", row.names = FALSE)
+write.csv(ITS_stage.traj.summary, "ITS_stage_traj_summary.csv", row.names = FALSE)
+  
+  #16S
+
+stage_num.df = data.frame(Stage_num = c(1,2,3,4,5,6,7),
+                          stage = c("V1", "V2", "V3", "V4", "R1", "R4", "R7"))
+nperm <- 100
+res_list <- list()
+
+for (i in seq_len(nperm)) {
+  set.seed(i + 42)
+
+  Iter.meta <- data.frame(sample_data(Bac_stage.rare.physeq)) %>%
+    select(SampleID, group, series, stage, plant_rep, compartment) %>%
+    left_join(stage_num.df) %>%
+    group_by(group, series, stage, compartment) %>%
+    sample_n(1) %>%
+    ungroup() %>%
+    mutate(PlantID = paste(group, compartment, series, "Iteration", i, sep = "_")) %>%
+    arrange(PlantID, Stage_num)
+
+  D <- as.matrix(Bac_stage.BC.dist)
+  D <- as.dist(D[Iter.meta$SampleID, Iter.meta$SampleID])
+
+  #Directionality and cumulative distance
+  traj <- defineTrajectories(D, Iter.meta$PlantID, Iter.meta$Stage_num)
+  met <- trajectoryMetrics(traj) %>%
+    dplyr::rename(PlantID = trajectory) %>%
+    select(PlantID, n_timepoints = n, cumulative_distance = length, directionality)
+
+  #Beta dispersion
+  grp <- interaction(Iter.meta$group, Iter.meta$compartment, drop = TRUE)
+  bd <- betadisper(D, grp, type = "centroid")
+
+  disp_plant <- data.frame(PlantID = Iter.meta$PlantID,
+                           dist_to_centroid = bd$distances) %>%
+    group_by(PlantID) %>%
+    summarise(beta_disp = mean(dist_to_centroid), .groups = "drop")
+
+  #Replicate number
+  n_grp <- Iter.meta %>%
+    group_by(group, compartment) %>%
+    summarise(n_trajectories = n_distinct(PlantID),
+              n_samples = n(),
+              .groups = "drop")
+
+  #Build the table
+  res_list[[i]] <- met %>%
+    left_join(disp_plant, by = "PlantID") %>%
+    left_join(Iter.meta %>% select(PlantID, group, series, compartment) %>% unique(),
+              by = "PlantID") %>%
+    left_join(n_grp, by = c("group", "compartment")) %>%
+    mutate(Iteration = i)
+}
+
+Bac_stage.traj.all.df <- bind_rows(res_list)
+
+#Summary table
+Bac_stage.traj.summary <- Bac_stage.traj.all.df %>%
+  group_by(group, compartment, Iteration) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp), mean),
+            n_trajectories = first(n_trajectories),
+            n_samples = first(n_samples),
+            .groups = "drop") %>%
+  group_by(group, compartment) %>%
+  summarise(across(c(directionality, cumulative_distance, beta_disp),
+                   list(mean = mean, sd = sd,
+                        q025 = ~quantile(.x, 0.025), q975 = ~quantile(.x, 0.975)),
+                   .names = "{.col}_{.fn}"),
+            n_trajectories = mean(n_trajectories),
+            n_samples = mean(n_samples),
+            .groups = "drop")
+
+Bac_stage.traj.summary
+
+## Export
+write.csv(Bac_stage.traj.all.df, "Bac_stage_traj_all_iterations.csv", row.names = FALSE)
+write.csv(Bac_stage.traj.summary, "Bac_stage_traj_summary.csv", row.names = FALSE)
+
+  ## Summary of all tables
+summary_list <- list(
+  ITS_Time  = ITS_time.traj.summary,
+  ITS_Stage = ITS_stage.traj.summary,
+  `16S_Time`  = Bac_time.traj.summary,
+  `16S_Stage` = Bac_stage.traj.summary
+)
+
+all_summary <- bind_rows(summary_list, .id = "origin") %>%
+  separate(origin, into = c("marker", "design"), sep = "_", remove = TRUE) %>%
+  relocate(marker, design)
+
+detail_list <- list(
+  ITS_Time  = ITS_time.traj.all.df,
+  ITS_Stage = ITS_stage.traj.all.df,
+  `16S_Time`  = Bac_time.traj.all.df,
+  `16S_Stage` = Bac_stage.traj.all.df
+)
+
+all_detail <- bind_rows(detail_list, .id = "origin") %>%
+  separate(origin, into = c("marker", "design"), sep = "_", remove = TRUE) %>%
+  relocate(marker, design)
+
+## Last modifications
+all_summary <- all_summary %>%
+  mutate(treatment = coalesce(treatment, group)) %>%
+  select(-group)
+
+all_detail <- all_detail %>%
+  mutate(treatment = coalesce(treatment, group)) %>%
+  select(-group)
+
+## Export
+write.csv(all_summary, "all_sum.csv", row.names = FALSE) #Final Table
+write.csv(all_detail,  "all_ite.csv", row.names = FALSE) #Table all Iterations
+```
+
+# Session info
+
+```{r}         
+sessionInfo()
+```
